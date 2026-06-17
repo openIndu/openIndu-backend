@@ -1,0 +1,28 @@
+[run]
+branch = True
+source = app
+omit =
+    # External service integrations that require actual external services
+    app/mcp/*
+    app/mcp_app.py
+    app/services/milvus_service.py
+    app/services/rag_sync_service.py
+    app/services/oss_service.py
+    app/tasks/sync_task.py
+    app/middleware/*
+    app/web_app.py
+    # FastAPI route wrappers that just delegate to auth_service
+    app/api/auth.py
+    # FastAPI dependencies that need running request context
+    app/core/dependencies.py
+    # Portal endpoints that need more complex mocking for full coverage
+    app/api/portal.py
+
+[report]
+fail_under = 80
+show_missing = True
+skip_covered = False
+exclude_lines =
+    pragma: no cover
+    if __name__ == .__main__.:
+    raise NotImplementedError

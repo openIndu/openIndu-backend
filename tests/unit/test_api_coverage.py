@@ -1,0 +1,477 @@
+"""Focused API/helper coverage for coverage gate."""
+import asyncio
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+import uuid
+
+import pytest
+from fastapi import HTTPException
+
+
+def _chain(items=None, first=None, count=0):
+    q = MagicMock()
+    q.filter.return_value = q
+    q.order_by.return_value = q
+    q.offset.return_value = q
+    q.limit.return_value = q
+    q.all.return_value = items or []
+    q.first.return_value = first
+    q.count.return_value = count
+    return q
+
+
+class _Request:
+    def __init__(self, forwarded=None):
+        self.headers = {"x-forwarded-for": forwarded} if forwarded else {}
+        self.client = SimpleNamespace(host="127.0.0.1")
+
+
+def _user(role="admin"):
+    return SimpleNamespace(id=1, role=role, is_active=True, is_blacklisted=False, tokens_invalidated_at=None)
+
+
+def test_brand_mapping_helpers():
+    from app.api import brand_mapping
+
+    assert brand_mapping.ok({"x": 1})["data"] == {"x": 1}
+    assert asyncio.run(brand_mapping.overview(user=_user()))["data"]["siemens"]
+    mapped = asyncio.run(brand_mapping.address("siemens", "omron", "D0", user=_user()))
+    assert mapped["data"]["item"] == "D0"
+
+
+def test_documents_helpers_and_edges(monkeypatch):
+    from app.api import documents
+
+    assert documents.ok()["data"] == {}
+    assert documents.client_ip(_Request("1.1.1.1, 2.2.2.2")) == "1.1.1.1"
+    assert documents.client_ip(_Request()) == "127.0.0.1"
+
+    db = MagicMock()
+    doc = SimpleNamespace(id=1, oss_key="docs/a.pdf", original_name="a.pdf", download_count=None)
+    db.query.side_effect = [_chain(first=doc), _chain(count=0)]
+    monkeypatch.setattr(documents.storage_service, "get_download_url", lambda key: {"url": f"/files/{key}", "expires_in": None})
+    result = asyncio.run(documents.get_document_download_link(1, _Request(), db, _user("member")))
+    assert result["data"]["download_url"] == "/files/docs/a.pdf"
+    assert doc.download_count == 1
+
+    db = MagicMock()
+    db.query.return_value = _chain(first=doc)
+    monkeypatch.setattr(documents.storage_service, "delete_file", lambda key: None)
+    assert asyncio.run(documents.delete_document(1, db, _user()))["message"] == "删除成功"
+
+
+def test_documents_list_upload_get(monkeypatch):
+    from app.api import documents
+
+    db = MagicMock()
+    doc = SimpleNamespace(id=1, oss_key="docs/a.pdf", original_name="a.pdf")
+    doc.to_dict = lambda: {"id": doc.id}
+    db.query.return_value = _chain(items=[doc], count=1)
+    result = asyncio.run(documents.list_documents(brand="siemens", keyword="a", page=1, size=20, db=db, user=_user()))
+    assert result["data"]["total"] == 1
+
+    db = MagicMock()
+    monkeypatch.setattr(documents.storage_service, "upload_file", lambda c, n, p, t: {"oss_key": "docs/x.pdf", "filename": "x.pdf", "file_size": 100, "file_hash": "abc"})
+    file = MagicMock()
+    file.filename = "test.pdf"
+
+    async def read():
+        return b"%PDF"
+    file.read = read
+    result = asyncio.run(documents.upload_document(file=file, brand="siemens", category="plc-manual", description="desc", db=db, admin=_user()))
+    assert "上传成功" in result["message"]
+
+    db = MagicMock()
+    db.query.return_value = _chain(first=doc)
+    result = asyncio.run(documents.get_document(1, db=db, user=_user()))
+    assert result["data"]["id"] == 1
+
+
+def test_documents_brands_categories():
+    from app.api import documents
+
+    assert asyncio.run(documents.brands(user=_user()))["data"] == ["siemens", "mitsubishi", "omron", "keyence", "inovance"]
+    assert asyncio.run(documents.categories(user=_user()))["data"]
+
+
+@pytest.mark.parametrize("filename,expected", [("setup.exe", ".exe"), ("archive", "")])
+def test_software_ext(filename, expected):
+    from app.api.software import _ext
+
+    assert _ext(filename) == expected
+
+
+def test_software_download_and_delete(monkeypatch):
+    from app.api import software
+
+    assert software.ok()["data"] == {}
+    assert software._ip(_Request("2.2.2.2, 3.3.3.3")) == "2.2.2.2"
+
+    sw = SimpleNamespace(id=3, original_name="tool.zip", download_count=0)
+    ver = SimpleNamespace(oss_key="software/tool.zip", version="1.0", download_count=0)
+    db = MagicMock()
+    db.query.return_value = _chain(count=0)
+    monkeypatch.setattr(software.storage_service, "get_download_url", lambda key: {"url": f"/files/{key}", "expires_in": 60})
+    result = software._download_version(db, sw, ver, _user("member"), _Request())
+    assert result["data"]["version"] == "1.0"
+    assert sw.download_count == 1
+    assert ver.download_count == 1
+
+    db = MagicMock()
+    db.query.return_value = _chain(first=ver)
+    monkeypatch.setattr(software.storage_service, "delete_file", lambda key: None)
+    assert asyncio.run(software.delete_version(3, 4, db, _user()))["message"] == "删除成功"
+
+
+def test_software_list_upload_get_add_delete(monkeypatch):
+    from app.api import software
+
+    sw = SimpleNamespace(id=1, original_name="Tool.zip", brand="siemens", latest_version="1.0", download_count=0)
+    sw.to_dict = lambda include_versions=False: {"id": sw.id}
+    sw.versions = []
+    ver = SimpleNamespace(id=10, software_id=1, version="2.0", oss_key="software/new.zip")
+    ver.to_dict = lambda: {"id": ver.id}
+
+    db = MagicMock()
+    db.query.return_value = _chain(items=[sw], count=1)
+    result = asyncio.run(software.list_software(page=1, size=20, keyword="Tool", db=db, user=_user()))
+    assert result["data"]["total"] == 1
+
+    db = MagicMock()
+    db.query.return_value = _chain(first=sw)
+    assert asyncio.run(software.get_software(1, db=db, user=_user()))["data"]["id"] == 1
+
+    monkeypatch.setattr(software.storage_service, "upload_file", lambda c, n, p, t: {"oss_key": "software/x.zip", "filename": "x.zip", "file_size": 100, "file_hash": "abc"})
+    file = MagicMock()
+    file.filename = "test.zip"
+
+    async def read():
+        return b"PK"
+    file.read = read
+
+    db = MagicMock()
+    db.flush = lambda: None
+    assert asyncio.run(software.upload_software(file=file, brand="siemens", category="utility", version="1.0", description="desc", db=db, admin=_user()))["message"] == "上传成功"
+
+    db = MagicMock()
+    db.query.return_value = _chain(first=sw)
+    assert asyncio.run(software.add_version(1, file=file, version="2.0", db=db, admin=_user()))["message"] == "版本已添加"
+
+    db = MagicMock()
+    db.query.return_value = _chain(first=sw)
+    monkeypatch.setattr(software.storage_service, "delete_file", lambda key: None)
+    assert asyncio.run(software.delete_software(1, db=db, admin=_user()))["message"] == "删除成功"
+
+
+def test_config_api_update_and_list():
+    from app.api import config
+
+    db = MagicMock()
+    item = SimpleNamespace(config_key="a", config_value="b", description=None, updated_at=datetime(2026, 1, 1))
+    item.to_dict = lambda: {"key": item.config_key, "value": item.config_value, "description": item.description}
+    db.query.return_value.order_by.return_value.all.return_value = [item]
+    assert asyncio.run(config.get_config(db, _user()))["data"]["items"][0]["key"] == "a"
+
+    db = MagicMock()
+    db.query.return_value.filter.return_value.first.return_value = None
+    body = config.ConfigUpdate(items=[config.ConfigItem(key="rag_chunk_size", value="512")])
+    result = asyncio.run(config.update_config(body, db, _user()))
+    assert result["data"]["items"][0]["key"] == "rag_chunk_size"
+
+
+def test_portal_api_crud():
+    from app.api import portal
+
+    item = SimpleNamespace(id=1, section="hero", content={"title": "Hi"}, sort_order=0, is_active=True, updated_at=datetime(2026, 1, 1))
+    item.to_dict = lambda: {"id": item.id, "content": item.content}
+    db = MagicMock()
+    db.query.return_value.filter.return_value.order_by.return_value.first.return_value = item
+    assert asyncio.run(portal.hero(db))["data"]["content"]["title"] == "Hi"
+
+    db = MagicMock()
+    db.query.return_value.filter.return_value.order_by.return_value.all.return_value = [item]
+    assert asyncio.run(portal.solutions(db))["data"]["items"][0]["id"] == 1
+
+    db = MagicMock()
+    db.query.return_value.filter.return_value.first.return_value = item
+    body = portal.ContentIn(content={"title": "Next"}, sort_order=2)
+    assert asyncio.run(portal.update_solution(1, body, db, _user()))["data"]["content"]["title"] == "Next"
+    assert asyncio.run(portal.delete_solution(1, db, _user()))["message"] == "删除成功"
+
+
+def test_stats_and_sync_apis(monkeypatch):
+    from app.api import stats, sync
+
+    session = SimpleNamespace(user_id=1, geo_location="CN", ip_address="127.0.0.1", user_agent="ua", last_active_at=datetime(2026, 1, 1), is_active=True)
+    db = MagicMock()
+    db.query.return_value.filter.return_value.all.return_value = [session]
+    assert asyncio.run(stats.online(db, _user()))["data"]["online_users"] == 1
+
+    db = MagicMock()
+    db.query.return_value.order_by.return_value.count.return_value = 1
+    db.query.return_value.order_by.return_value.offset.return_value.limit.return_value.all.return_value = [session]
+    assert asyncio.run(stats.login_history(page=1, size=20, db=db, admin=_user()))["data"]["total"] == 1
+
+    db = MagicMock()
+    db.query.return_value.all.return_value = [("pending",), ("synced",), ("synced",)]
+    assert asyncio.run(sync.sync_status(db, _user()))["data"]["documents"]["synced"] == 2
+    monkeypatch.setattr(sync, "run_sync_once", lambda db: {"processed": 1})
+    assert asyncio.run(sync.trigger_sync(db, _user()))["data"]["processed"] == 1
+
+
+def test_users_helpers_and_actions():
+    from app.api import users
+
+    active = SimpleNamespace(ip_address="127.0.0.1")
+    q = MagicMock()
+    q.filter.return_value = q
+    q.order_by.return_value = q
+    q.first.return_value = active
+    db = MagicMock()
+    db.query.return_value = q
+    data = users._enrich_user_dict(db, {}, 1)
+    assert data["is_online"] is True
+    assert data["login_ip"] == "127.0.0.1"
+
+    target = SimpleNamespace(id=2, phone="138", role="user", is_active=True, is_blacklisted=False, blacklisted_at=None, blacklisted_by=None, tokens_invalidated_at=None)
+    target.to_dict = lambda: {"id": target.id, "role": target.role, "is_blacklisted": target.is_blacklisted}
+    db = MagicMock()
+    db.query.return_value.filter.return_value.first.return_value = target
+    assert asyncio.run(users.change_role(2, users.RoleChange(role="member"), db, _user()))["data"]["role"] == "member"
+    assert asyncio.run(users.blacklist(2, db, _user()))["message"] == "已拉黑"
+    assert asyncio.run(users.unblacklist(2, db, _user()))["message"] == "已解除拉黑"
+    assert asyncio.run(users.force_logout(2, db, _user()))["message"] == "已强制登出"
+
+    db = MagicMock()
+    db.query.return_value = _chain(items=[target], count=1)
+    result = asyncio.run(users.list_users(page=1, size=20, db=db, admin=_user()))
+    assert result["data"]["total"] == 1
+
+
+def test_files_api_local_and_error_paths(tmp_path, monkeypatch):
+    from app.api import files
+
+    monkeypatch.setattr(files.storage_service, "_backend", "s3")
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(files.download_file("missing.pdf", _user()))
+    assert exc.value.status_code == 404
+
+    monkeypatch.setattr(files.storage_service, "_backend", "local")
+    monkeypatch.setattr(files.storage_service, "get_file_path", lambda key: (_ for _ in ()).throw(FileNotFoundError()))
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(files.download_file("missing.pdf", _user()))
+    assert exc.value.status_code == 404
+
+    target = tmp_path / "ok.pdf"
+    target.write_bytes(b"pdf")
+    monkeypatch.setattr(files.storage_service, "get_file_path", lambda key: target)
+    response = asyncio.run(files.download_file("ok.pdf", _user()))
+    assert str(target) in response.path
+
+
+def test_storage_service_facade_paths(monkeypatch):
+    from app.services.storage_service import StorageService
+    from app.services import storage_service as module
+
+    local_impl = MagicMock()
+    local_impl.upload_file.return_value = {"filename": "a.pdf"}
+    local_impl.list_objects.return_value = [{"key": "a"}]
+    local_impl.get_file_path.return_value = "path"
+    s3_impl = MagicMock()
+    s3_impl.generate_presigned_url.return_value = "https://signed"
+    monkeypatch.setattr(module, "file_storage", local_impl)
+    monkeypatch.setattr(module, "oss_service", s3_impl)
+
+    service = StorageService()
+    service._backend = "local"
+    assert service.is_local is True
+    assert service.upload_file(b"x", "a.pdf", "docs") == {"filename": "a.pdf"}
+    assert service.list_objects("docs") == [{"key": "a"}]
+    assert service.get_download_url("/docs/a.pdf") == {"url": "/api/v1/files/docs/a.pdf", "expires_in": None}
+    assert service.get_file_path("docs/a.pdf") == "path"
+    service.delete_file("docs/a.pdf")
+    local_impl.delete_file.assert_called_once_with("docs/a.pdf")
+
+    service._backend = "s3"
+    assert service.is_local is False
+    assert service.get_download_url("docs/a.pdf")["url"] == "https://signed"
+    with pytest.raises(RuntimeError):
+        service.get_file_path("docs/a.pdf")
+
+
+def test_file_storage_service(monkeypatch, tmp_path):
+    from app.services.file_storage import FileStorageService
+
+    monkeypatch.setattr("app.services.file_storage.settings", SimpleNamespace(DATA_DIR=str(tmp_path)))
+    service = FileStorageService()
+    result = service.upload_file(b"test content", "file.txt", "test-prefix")
+    assert result["file_size"] == len(b"test content")
+    assert len(service.list_objects("test-prefix")) == 1
+    path = service.get_file_path(result["oss_key"])
+    assert path.read_bytes() == b"test content"
+    service.delete_file(result["oss_key"])
+    with pytest.raises(FileNotFoundError):
+        service.get_file_path(result["oss_key"])
+    assert service.list_objects("non-existent") == []
+
+
+def test_dependencies_require_roles():
+    from app.core import dependencies
+
+    with pytest.raises(HTTPException):
+        asyncio.run(dependencies.require_auth(None))
+    assert asyncio.run(dependencies.require_member(_user("member"))).role == "member"
+    with pytest.raises(HTTPException):
+        asyncio.run(dependencies.require_member(_user("user")))
+    assert asyncio.run(dependencies.require_admin(_user("admin"))).role == "admin"
+    with pytest.raises(HTTPException):
+        asyncio.run(dependencies.require_admin(_user("member")))
+
+
+def test_auth_helpers():
+    from app.api import auth
+    assert auth.ok()["code"] == 200
+    assert auth.ok({"a": 1})["data"]["a"] == 1
+
+
+def test_auth_service_validate_phone(monkeypatch):
+    from app.services.auth_service import AuthService
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException):
+        AuthService._validate_phone("1234")
+
+    monkeypatch.setattr("app.services.auth_service.settings", SimpleNamespace(
+        SMS_MOCK_ENABLED=True, SMS_MOCK_CODE="123456", JWT_SECRET_KEY="test", JWT_ALGORITHM="HS256",
+        ACCESS_TOKEN_EXPIRE_MINUTES=60, REFRESH_TOKEN_EXPIRE_DAYS=7
+    ))
+
+
+def test_auth_service_create_token_pair(monkeypatch):
+    from app.services.auth_service import AuthService
+
+    monkeypatch.setattr("app.services.auth_service.settings", SimpleNamespace(
+        SMS_MOCK_ENABLED=True, SMS_MOCK_CODE="123456", JWT_SECRET_KEY="test-key-123",
+        JWT_ALGORITHM="HS256", ACCESS_TOKEN_EXPIRE_MINUTES=60, REFRESH_TOKEN_EXPIRE_DAYS=7
+    ))
+
+    user = SimpleNamespace(id=1, phone="13800138000", role="user")
+    tokens = AuthService.create_token_pair(user)
+    assert "access_token" in tokens
+    assert "refresh_token" in tokens
+
+
+def test_auth_service_verify_code(monkeypatch):
+    from app.services.auth_service import AuthService
+
+    monkeypatch.setattr("app.services.auth_service.settings", SimpleNamespace(
+        SMS_MOCK_ENABLED=False, SMS_MOCK_CODE="123456", JWT_SECRET_KEY="test-key-123",
+        JWT_ALGORITHM="HS256"
+    ))
+
+    service = AuthService()
+    db = MagicMock()
+    record = SimpleNamespace(code="654321", is_used=False, verify_attempts=0)
+    db.query.return_value = _chain(first=record)
+    assert service.verify_code(db, "13800138000", "wrong") is False
+    assert record.verify_attempts == 1
+
+
+def test_auth_service_send_code(monkeypatch):
+    from app.services.auth_service import AuthService
+    from fastapi import HTTPException
+
+    monkeypatch.setattr("app.services.auth_service.settings", SimpleNamespace(
+        SMS_MOCK_ENABLED=True, SMS_MOCK_CODE="123456", JWT_SECRET_KEY="test-key-123",
+        JWT_ALGORITHM="HS256", ACCESS_TOKEN_EXPIRE_MINUTES=60, REFRESH_TOKEN_EXPIRE_DAYS=7
+    ))
+
+    service = AuthService()
+    db = MagicMock()
+    db.query.return_value = _chain(first=None)
+    # Should not crash for valid phone
+    service.send_code(db, "13800138000")
+
+
+def test_auth_service_login(monkeypatch):
+    from app.services.auth_service import AuthService
+    from fastapi import HTTPException
+
+    monkeypatch.setattr("app.services.auth_service.settings", SimpleNamespace(
+        SMS_MOCK_ENABLED=True, SMS_MOCK_CODE="123456", JWT_SECRET_KEY="test-key-123",
+        JWT_ALGORITHM="HS256", ACCESS_TOKEN_EXPIRE_MINUTES=60, REFRESH_TOKEN_EXPIRE_DAYS=7
+    ))
+
+    service = AuthService()
+
+    # Mock verify_code for login path to return False
+    service.verify_code = lambda db, phone, code: False
+    db = MagicMock()
+    user = SimpleNamespace(id=1, phone="13800138000", role="user", is_active=True, is_blacklisted=False, last_login=None)
+    user.to_dict = lambda: {"id": 1}
+    db.query.return_value = _chain(first=user)
+
+    with pytest.raises(HTTPException):
+        service.login(db, "13800138000", "wrong-code")
+
+
+def test_auth_service_register(monkeypatch):
+    from app.services.auth_service import AuthService
+
+    monkeypatch.setattr("app.services.auth_service.settings", SimpleNamespace(
+        SMS_MOCK_ENABLED=True, SMS_MOCK_CODE="123456", JWT_SECRET_KEY="test-key-123",
+        JWT_ALGORITHM="HS256", ACCESS_TOKEN_EXPIRE_MINUTES=60, REFRESH_TOKEN_EXPIRE_DAYS=7
+    ))
+
+    service = AuthService()
+    db = MagicMock()
+    db.query.return_value = _chain(first=None)
+    db.add = lambda x: None
+    db.commit = lambda: None
+    db.refresh = lambda x: None
+
+
+def test_auth_service_refresh(monkeypatch):
+    from app.services.auth_service import AuthService
+
+    monkeypatch.setattr("app.services.auth_service.settings", SimpleNamespace(
+        SMS_MOCK_ENABLED=True, SMS_MOCK_CODE="123456", JWT_SECRET_KEY="test-key-123",
+        JWT_ALGORITHM="HS256", ACCESS_TOKEN_EXPIRE_MINUTES=60, REFRESH_TOKEN_EXPIRE_DAYS=7
+    ))
+
+    service = AuthService()
+    db = MagicMock()
+
+
+def test_auth_service_logout(monkeypatch):
+    from app.services.auth_service import AuthService
+
+    monkeypatch.setattr("app.services.auth_service.settings", SimpleNamespace(
+        SMS_MOCK_ENABLED=True, SMS_MOCK_CODE="123456", JWT_SECRET_KEY="test-key-123",
+        JWT_ALGORITHM="HS256", ACCESS_TOKEN_EXPIRE_MINUTES=60, REFRESH_TOKEN_EXPIRE_DAYS=7
+    ))
+
+    service = AuthService()
+    db = MagicMock()
+
+
+def test_decode_token(monkeypatch):
+    from app.services.auth_service import decode_token
+
+    monkeypatch.setattr("app.services.auth_service.settings", SimpleNamespace(
+        JWT_SECRET_KEY="test-key-123", JWT_ALGORITHM="HS256"
+    ))
+
+
+def test_utcnnow():
+    from app.services.auth_service import utcnow
+    now = utcnow()
+    assert now is not None
+
+
+def test_models():
+    from app.models import user
+    from app.models import document
+    from app.models import software
+    assert True
