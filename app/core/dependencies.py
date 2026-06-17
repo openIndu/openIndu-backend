@@ -1,4 +1,6 @@
 """FastAPI dependency injection helpers."""
+from datetime import datetime, timezone
+
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError
@@ -41,6 +43,13 @@ async def get_current_user(
     user = db.query(User).filter(User.id == int(user_id)).first()
     if not user or not user.is_active or user.is_blacklisted:
         return None
+    # Check if tokens were invalidated after this token was issued
+    if user.tokens_invalidated_at:
+        iat = payload.get("iat")
+        if iat:
+            token_issued_at = datetime.fromtimestamp(iat, tz=timezone.utc).replace(tzinfo=None)
+            if user.tokens_invalidated_at > token_issued_at:
+                return None
     return user
 
 

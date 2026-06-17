@@ -1,4 +1,6 @@
 """Middleware that rejects revoked JWTs."""
+from datetime import datetime, timezone
+
 from fastapi import Request
 from jose import JWTError
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -6,6 +8,7 @@ from starlette.responses import JSONResponse
 
 from app.core.database import SessionLocal
 from app.models.token_blacklist import TokenBlacklist
+from app.models.user import User
 from app.services.auth_service import decode_token
 
 
@@ -17,13 +20,26 @@ class TokenBlacklistMiddleware(BaseHTTPMiddleware):
             try:
                 payload = decode_token(token)
                 jti = payload.get("jti")
-                if jti:
-                    db = SessionLocal()
-                    try:
-                        if db.query(TokenBlacklist).filter(TokenBlacklist.jti == jti).first():
-                            return JSONResponse(status_code=401, content={"code": 401, "detail": "Token 已被撤销"})
-                    finally:
-                        db.close()
+                db = SessionLocal()
+                try:
+                    # Check jti blacklist
+                    if jti and db.query(TokenBlacklist).filter(TokenBlacklist.jti == jti).first():
+                        return JSONResponse(status_code=401, content={"code": 401, "detail": "Token 已被撤销"})
+
+                    # Check user blacklist and token invalidation
+                    user_id = payload.get("sub")
+                    if user_id:
+                        user = db.query(User).filter(User.id == int(user_id)).first()
+                        if user and user.is_blacklisted:
+                            return JSONResponse(status_code=401, content={"code": 401, "detail": "账号已被禁用"})
+                        if user and user.tokens_invalidated_at:
+                            iat = payload.get("iat")
+                            if iat:
+                                token_issued_at = datetime.fromtimestamp(iat, tz=timezone.utc).replace(tzinfo=None)
+                                if user.tokens_invalidated_at > token_issued_at:
+                                    return JSONResponse(status_code=401, content={"code": 401, "detail": "Token 已被撤销（强制登出）"})
+                finally:
+                    db.close()
             except JWTError:
                 pass
         return await call_next(request)
