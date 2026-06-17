@@ -14,6 +14,7 @@ class User(Base):
     is_blacklisted = Column(Boolean, nullable=False, default=False)
     blacklisted_at = Column(DateTime, nullable=True)
     blacklisted_by = Column(BigInteger, ForeignKey("users.id"), nullable=True)
+    tokens_invalidated_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     last_login = Column(DateTime, nullable=True)
 
@@ -26,6 +27,7 @@ class User(Base):
             "is_blacklisted": self.is_blacklisted,
             "blacklisted_at": self.blacklisted_at.isoformat() if self.blacklisted_at else None,
             "blacklisted_by": self.blacklisted_by,
+            "tokens_invalidated_at": self.tokens_invalidated_at.isoformat() if self.tokens_invalidated_at else None,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "last_login": self.last_login.isoformat() if self.last_login else None,
         }

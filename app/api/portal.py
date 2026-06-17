@@ -114,9 +114,24 @@ async def benefits(db: Session = Depends(get_db)):
     return ok({"items": _list(db, "benefits")})
 
 
+@router.post("/benefits")
+async def create_benefit(body: ContentIn, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    item = PortalContent(section="benefits", content=body.content, sort_order=body.sort_order, is_active=body.is_active)
+    db.add(item); db.commit(); db.refresh(item)
+    return ok(item.to_dict(), "创建成功")
+
+
 @router.put("/benefits")
 async def update_benefits(body: ContentIn, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
     return ok(_upsert_single(db, "benefits", body))
+
+
+@router.delete("/benefits/{item_id}")
+async def delete_benefit(item_id: int, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    item = db.query(PortalContent).filter(PortalContent.id == item_id, PortalContent.section == "benefits").first()
+    if not item: raise HTTPException(404, "内容不存在")
+    db.delete(item); db.commit()
+    return ok(message="删除成功")
 
 
 @router.get("/footer")

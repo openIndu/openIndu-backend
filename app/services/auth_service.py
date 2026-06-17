@@ -35,7 +35,8 @@ class AuthService:
 
     @staticmethod
     def _create_token(user: User, token_type: str, expires_delta: timedelta) -> tuple[str, str, datetime]:
-        expires_at = utcnow() + expires_delta
+        now = utcnow()
+        expires_at = now + expires_delta
         jti = uuid.uuid4().hex
         payload = {
             "sub": str(user.id),
@@ -43,6 +44,7 @@ class AuthService:
             "role": user.role,
             "type": token_type,
             "jti": jti,
+            "iat": now,
             "exp": expires_at,
         }
         return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM), jti, expires_at
@@ -150,6 +152,13 @@ class AuthService:
         user = db.query(User).filter(User.id == int(payload["sub"])).first()
         if not user or not user.is_active or user.is_blacklisted:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="账号不可用")
+        # Check if tokens were invalidated after this refresh token was issued
+        if user.tokens_invalidated_at:
+            iat = payload.get("iat")
+            if iat:
+                token_issued_at = datetime.fromtimestamp(iat, tz=timezone.utc).replace(tzinfo=None)
+                if user.tokens_invalidated_at > token_issued_at:
+                    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token 已被撤销（强制登出）")
         self.blacklist_token(db, payload, reason="refresh_rotation")
         return {"user": user.to_dict(), "tokens": self.create_token_pair(user)}
 
