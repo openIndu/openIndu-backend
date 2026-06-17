@@ -1,0 +1,160 @@
+"""SMS authentication and JWT lifecycle service."""
+import random
+import re
+import uuid
+from datetime import datetime, timedelta, timezone
+
+from fastapi import HTTPException, status
+from jose import jwt
+from sqlalchemy import func
+from sqlalchemy.orm import Session
+
+from app.core.config import settings
+from app.models.sms_code import SmsCode
+from app.models.token_blacklist import TokenBlacklist
+from app.models.user import User
+
+PHONE_RE = re.compile(r"^1\d{10}$")
+
+
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def decode_token(token: str) -> dict:
+    return jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+
+
+class AuthService:
+    """Phone + SMS auth with access/refresh JWT rotation."""
+
+    @staticmethod
+    def _validate_phone(phone: str) -> None:
+        if not PHONE_RE.match(phone):
+            raise HTTPException(status_code=400, detail="手机号格式不正确")
+
+    @staticmethod
+    def _create_token(user: User, token_type: str, expires_delta: timedelta) -> tuple[str, str, datetime]:
+        expires_at = utcnow() + expires_delta
+        jti = uuid.uuid4().hex
+        payload = {
+            "sub": str(user.id),
+            "phone": user.phone,
+            "role": user.role,
+            "type": token_type,
+            "jti": jti,
+            "exp": expires_at,
+        }
+        return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM), jti, expires_at
+
+    @classmethod
+    def create_token_pair(cls, user: User) -> dict:
+        access_token, access_jti, access_expires_at = cls._create_token(
+            user, "access", timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+        )
+        refresh_token, refresh_jti, refresh_expires_at = cls._create_token(
+            user, "refresh", timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+        )
+        return {
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "token_type": "bearer",
+            "expires_in": settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+            "access_jti": access_jti,
+            "refresh_jti": refresh_jti,
+            "access_expires_at": access_expires_at,
+            "refresh_expires_at": refresh_expires_at,
+        }
+
+    def send_code(self, db: Session, phone: str) -> None:
+        self._validate_phone(phone)
+        now = utcnow()
+        latest = db.query(SmsCode).filter(SmsCode.phone == phone).order_by(SmsCode.created_at.desc()).first()
+        if latest and latest.created_at and (now - latest.created_at).total_seconds() < 60:
+            raise HTTPException(status_code=429, detail="验证码发送过于频繁，请稍后再试")
+        today_start = datetime(now.year, now.month, now.day)
+        today_count = db.query(SmsCode).filter(SmsCode.phone == phone, SmsCode.created_at >= today_start).count()
+        if today_count >= 10:
+            raise HTTPException(status_code=429, detail="今日验证码发送次数已达上限")
+        code = settings.SMS_MOCK_CODE if settings.SMS_MOCK_ENABLED else f"{random.randint(0, 999999):06d}"
+        db.add(SmsCode(phone=phone, code=code, expires_at=now + timedelta(minutes=5), last_sent_at=now))
+        db.commit()
+        # Production SMS provider integration can be added here.
+
+    def verify_code(self, db: Session, phone: str, code: str) -> bool:
+        self._validate_phone(phone)
+        if settings.SMS_MOCK_ENABLED and code == settings.SMS_MOCK_CODE:
+            return True
+        now = utcnow()
+        record = db.query(SmsCode).filter(
+            SmsCode.phone == phone,
+            SmsCode.is_used.is_(False),
+            SmsCode.expires_at > now,
+        ).order_by(SmsCode.created_at.desc()).first()
+        if not record:
+            return False
+        record.verify_attempts += 1
+        if record.verify_attempts > 3:
+            record.is_used = True
+            db.commit()
+            return False
+        ok = record.code == code
+        if ok:
+            record.is_used = True
+        db.commit()
+        return ok
+
+    def register(self, db: Session, phone: str, code: str) -> dict:
+        if not self.verify_code(db, phone, code):
+            raise HTTPException(status_code=400, detail="验证码错误或已过期")
+        existing = db.query(User).filter(User.phone == phone).first()
+        if existing:
+            raise HTTPException(status_code=409, detail="用户已存在")
+        role = "admin" if db.query(func.count(User.id)).scalar() == 0 else "user"
+        user = User(phone=phone, role=role, is_active=True, is_blacklisted=False, last_login=utcnow())
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        return {"user": user.to_dict(), "tokens": self.create_token_pair(user)}
+
+    def login(self, db: Session, phone: str, code: str) -> dict:
+        if not self.verify_code(db, phone, code):
+            raise HTTPException(status_code=400, detail="验证码错误或已过期")
+        user = db.query(User).filter(User.phone == phone).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="用户不存在，请先注册")
+        if not user.is_active or user.is_blacklisted:
+            raise HTTPException(status_code=403, detail="账号已被禁用")
+        user.last_login = utcnow()
+        db.commit()
+        db.refresh(user)
+        return {"user": user.to_dict(), "tokens": self.create_token_pair(user)}
+
+    def blacklist_token(self, db: Session, payload: dict, reason: str = "logout") -> None:
+        jti = payload.get("jti")
+        user_id = payload.get("sub")
+        token_type = payload.get("type", "access")
+        exp = payload.get("exp")
+        if not jti or not user_id or db.query(TokenBlacklist).filter(TokenBlacklist.jti == jti).first():
+            return
+        expires_at = datetime.fromtimestamp(exp, tz=timezone.utc).replace(tzinfo=None) if exp else utcnow()
+        db.add(TokenBlacklist(jti=jti, user_id=int(user_id), token_type=token_type, reason=reason, expires_at=expires_at))
+        db.commit()
+
+    def refresh_token(self, db: Session, refresh_token: str) -> dict:
+        payload = decode_token(refresh_token)
+        if payload.get("type") != "refresh":
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="无效 refresh token")
+        if db.query(TokenBlacklist).filter(TokenBlacklist.jti == payload.get("jti")).first():
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="refresh token 已失效")
+        user = db.query(User).filter(User.id == int(payload["sub"])).first()
+        if not user or not user.is_active or user.is_blacklisted:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="账号不可用")
+        self.blacklist_token(db, payload, reason="refresh_rotation")
+        return {"user": user.to_dict(), "tokens": self.create_token_pair(user)}
+
+    def logout(self, db: Session, token: str) -> None:
+        self.blacklist_token(db, decode_token(token), reason="logout")
+
+
+auth_service = AuthService()
