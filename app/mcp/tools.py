@@ -1,4 +1,5 @@
 """MCP tool definitions aligned with document categories."""
+from app.core.database import SessionLocal
 from app.services.milvus_service import milvus_service
 
 
@@ -43,8 +44,54 @@ def get_brand_mapping(source_brand: str, target_brand: str, item: str):
 
 
 def list_available_documents(brand: str | None = None, category: str | None = None):
-    return {"brand": brand, "category": category, "items": []}
+    """List available documents from the database, filtered by brand/category."""
+    from app.models.document import Document
+
+    db = SessionLocal()
+    try:
+        q = db.query(Document)
+        if brand:
+            q = q.filter(Document.brand == brand)
+        if category:
+            q = q.filter(Document.category == category)
+        docs = q.order_by(Document.upload_time.desc()).all()
+        items = [
+            {
+                "id": d.id,
+                "name": d.original_name,
+                "brand": d.brand,
+                "category": d.category,
+                "sync_status": d.sync_status,
+            }
+            for d in docs
+        ]
+        return {"brand": brand, "category": category, "items": items}
+    finally:
+        db.close()
 
 
 def list_available_software(brand: str | None = None, category: str | None = None):
-    return {"brand": brand, "category": category, "items": []}
+    """List available software from the database, filtered by brand/category."""
+    from app.models.software import Software
+
+    db = SessionLocal()
+    try:
+        q = db.query(Software).filter(Software.is_active == True)  # noqa: E712
+        if brand:
+            q = q.filter(Software.brand == brand)
+        if category:
+            q = q.filter(Software.category == category)
+        sw_list = q.order_by(Software.created_at.desc()).all()
+        items = [
+            {
+                "id": s.id,
+                "name": s.original_name,
+                "brand": s.brand,
+                "category": s.category,
+                "latest_version": s.latest_version,
+            }
+            for s in sw_list
+        ]
+        return {"brand": brand, "category": category, "items": items}
+    finally:
+        db.close()
