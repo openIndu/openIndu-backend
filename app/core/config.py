@@ -7,6 +7,13 @@ class Settings(BaseSettings):
 
     DATABASE_URL: str = "postgresql://openindu:openindu123@localhost:5432/openindu_backend"
 
+    # --- Storage backend ---
+    # "local": filesystem storage under DATA_DIR (dev / low-traffic)
+    # "s3":    S3-compatible storage via OSS_* env vars (MinIO dev, OSS prod)
+    STORAGE_BACKEND: str = "local"
+    DATA_DIR: str = "/data/files"
+
+    # --- S3 / OSS credentials (only used when STORAGE_BACKEND=s3) ---
     OSS_ACCESS_KEY_ID: str = "minioadmin"
     OSS_ACCESS_KEY_SECRET: str = "minioadmin"
     OSS_ENDPOINT: str = "http://localhost:9000"
