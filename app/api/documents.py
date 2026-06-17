@@ -9,7 +9,7 @@ from app.core.dependencies import get_db, require_admin, require_auth, require_m
 from app.models.document import Document
 from app.models.download_log import DownloadLog
 from app.models.user import User
-from app.services.oss_service import oss_service
+from app.services.storage_service import storage_service
 
 router = APIRouter(prefix="/documents")
 BRANDS = ["siemens", "mitsubishi", "omron", "keyence", "inovance"]
@@ -43,7 +43,7 @@ async def upload_document(file: UploadFile = File(...), brand: str = Form(...), 
     if not file.filename or not file.filename.lower().endswith(".pdf"): raise HTTPException(415, "仅支持 PDF 文件")
     content = await file.read()
     if len(content) > settings.DOCUMENT_MAX_SIZE_MB * 1024 * 1024: raise HTTPException(413, "文件大小超过限制")
-    meta = oss_service.upload_file(content, file.filename, f"documents/{brand}", file.content_type or "application/pdf")
+    meta = storage_service.upload_file(content, file.filename, f"documents/{brand}", file.content_type or "application/pdf")
     doc = Document(filename=meta["filename"], original_name=file.filename, brand=brand, category=category, file_size=meta["file_size"], file_hash=meta["file_hash"], oss_key=meta["oss_key"], description=description)
     db.add(doc); db.commit(); db.refresh(doc)
     return ok(doc.to_dict(), "上传成功")
@@ -77,14 +77,14 @@ async def get_document_download_link(doc_id: int, request: Request, db: Session 
     doc.download_count = (doc.download_count or 0) + 1
     db.add(DownloadLog(user_id=current_user.id, resource_type="document", resource_id=doc_id, ip_address=client_ip(request)))
     db.commit()
-    signed_url = oss_service.generate_presigned_url(doc.oss_key, settings.PRESIGNED_URL_EXPIRE_MINUTES)
-    return ok({"download_url": signed_url, "expires_in": settings.PRESIGNED_URL_EXPIRE_MINUTES * 60, "filename": doc.original_name})
+    signed_url = storage_service.get_download_url(doc.oss_key)
+    return ok({"download_url": signed_url["url"], "expires_in": signed_url["expires_in"], "filename": doc.original_name})
 
 
 @router.delete("/{doc_id}")
 async def delete_document(doc_id: int, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
     doc = db.query(Document).filter(Document.id == doc_id).first()
     if not doc: raise HTTPException(404, "文档不存在")
-    oss_service.delete_file(doc.oss_key)
+    storage_service.delete_file(doc.oss_key)
     db.delete(doc); db.commit()
     return ok(message="删除成功")

@@ -9,7 +9,7 @@ from app.core.dependencies import get_db, require_admin, require_auth, require_m
 from app.models.download_log import DownloadLog
 from app.models.software import Software, SoftwareVersion
 from app.models.user import User
-from app.services.oss_service import oss_service
+from app.services.storage_service import storage_service
 
 router = APIRouter(prefix="/software")
 BRANDS = ["siemens", "mitsubishi", "omron", "keyence", "inovance"]
@@ -54,7 +54,7 @@ async def upload_software(file: UploadFile = File(...), brand: str = Form(...), 
     if not file.filename or _ext(file.filename) not in ALLOWED_EXTS: raise HTTPException(415, "不支持的软件包格式")
     content = await file.read()
     if len(content) > settings.SOFTWARE_MAX_SIZE_GB * 1024 * 1024 * 1024: raise HTTPException(413, "文件大小超过限制")
-    meta = oss_service.upload_file(content, file.filename, f"software/{brand}", file.content_type)
+    meta = storage_service.upload_file(content, file.filename, f"software/{brand}", file.content_type)
     sw = Software(filename=meta["filename"], original_name=file.filename, brand=brand, category=category, latest_version=version, description=description)
     db.add(sw); db.flush()
     db.add(SoftwareVersion(software_id=sw.id, version=version, file_size=meta["file_size"], file_hash=meta["file_hash"], oss_key=meta["oss_key"]))
@@ -97,8 +97,8 @@ def _download_version(db: Session, sw: Software, version: SoftwareVersion, user:
     version.download_count = (version.download_count or 0) + 1
     db.add(DownloadLog(user_id=user.id, resource_type="software", resource_id=sw.id, ip_address=_ip(request)))
     db.commit()
-    url = oss_service.generate_presigned_url(version.oss_key, settings.PRESIGNED_URL_EXPIRE_MINUTES)
-    return ok({"download_url": url, "expires_in": settings.PRESIGNED_URL_EXPIRE_MINUTES * 60, "filename": sw.original_name, "version": version.version})
+    url = storage_service.get_download_url(version.oss_key)
+    return ok({"download_url": url["url"], "expires_in": url["expires_in"], "filename": sw.original_name, "version": version.version})
 
 
 @router.post("/{software_id}/versions")
@@ -106,7 +106,7 @@ async def add_version(software_id: int, file: UploadFile = File(...), version: s
     sw = db.query(Software).filter(Software.id == software_id).first()
     if not sw: raise HTTPException(404, "软件不存在")
     if not file.filename or _ext(file.filename) not in ALLOWED_EXTS: raise HTTPException(415, "不支持的软件包格式")
-    content = await file.read(); meta = oss_service.upload_file(content, file.filename, f"software/{sw.brand}", file.content_type)
+    content = await file.read(); meta = storage_service.upload_file(content, file.filename, f"software/{sw.brand}", file.content_type)
     ver = SoftwareVersion(software_id=sw.id, version=version, file_size=meta["file_size"], file_hash=meta["file_hash"], oss_key=meta["oss_key"])
     sw.latest_version = version
     db.add(ver); db.commit(); db.refresh(ver)
@@ -117,7 +117,7 @@ async def add_version(software_id: int, file: UploadFile = File(...), version: s
 async def delete_version(software_id: int, version_id: int, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
     ver = db.query(SoftwareVersion).filter(SoftwareVersion.id == version_id, SoftwareVersion.software_id == software_id).first()
     if not ver: raise HTTPException(404, "版本不存在")
-    oss_service.delete_file(ver.oss_key); db.delete(ver); db.commit()
+    storage_service.delete_file(ver.oss_key); db.delete(ver); db.commit()
     return ok(message="删除成功")
 
 
@@ -125,6 +125,6 @@ async def delete_version(software_id: int, version_id: int, db: Session = Depend
 async def delete_software(software_id: int, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
     sw = db.query(Software).filter(Software.id == software_id).first()
     if not sw: raise HTTPException(404, "软件不存在")
-    for ver in sw.versions: oss_service.delete_file(ver.oss_key)
+    for ver in sw.versions: storage_service.delete_file(ver.oss_key)
     db.delete(sw); db.commit()
     return ok(message="删除成功")
