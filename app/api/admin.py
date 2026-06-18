@@ -17,23 +17,40 @@ def ok(data=None, message="操作成功"):
 async def audit_logs(
     page: int = Query(1, ge=1),
     page_size: int = Query(15, ge=1, le=100),
+    admin_keyword: str | None = Query(None),
+    target_keyword: str | None = Query(None),
+    action: str | None = Query(None),
     db: Session = Depends(get_db),
     admin_user: User = Depends(require_admin),
 ):
-    q = db.query(AdminAuditLog).order_by(AdminAuditLog.created_at.desc())
-    total = q.count()
-    logs = q.offset((page - 1) * page_size).limit(page_size).all()
+    AdminUser = User.__class__  # just an alias trick — use aliased()
+    from sqlalchemy.orm import aliased
+    AdminAlias = aliased(User, name="admin_alias")
+    TargetAlias = aliased(User, name="target_alias")
 
-    user_ids = {log.admin_id for log in logs} | {log.target_user_id for log in logs if log.target_user_id}
-    phone_map = {u.id: u.phone for u in db.query(User).filter(User.id.in_(user_ids)).all()} if user_ids else {}
+    q = (
+        db.query(AdminAuditLog, AdminAlias.phone.label("admin_phone"), TargetAlias.phone.label("target_phone"))
+        .join(AdminAlias, AdminAuditLog.admin_id == AdminAlias.id, isouter=True)
+        .join(TargetAlias, AdminAuditLog.target_user_id == TargetAlias.id, isouter=True)
+        .order_by(AdminAuditLog.created_at.desc())
+    )
+    if admin_keyword:
+        q = q.filter(AdminAlias.phone.ilike(f"%{admin_keyword}%"))
+    if target_keyword:
+        q = q.filter(TargetAlias.phone.ilike(f"%{target_keyword}%"))
+    if action:
+        q = q.filter(AdminAuditLog.action == action)
+
+    total = q.count()
+    rows = q.offset((page - 1) * page_size).limit(page_size).all()
 
     items = [{
         "id": log.id,
-        "admin_username": phone_map.get(log.admin_id) or f"ID:{log.admin_id}",
-        "target_user": phone_map.get(log.target_user_id) or (f"ID:{log.target_user_id}" if log.target_user_id else "-"),
+        "admin_username": admin_phone or f"ID:{log.admin_id}",
+        "target_user": target_phone or (f"ID:{log.target_user_id}" if log.target_user_id else "-"),
         "action": log.action,
         "detail": str(log.detail) if log.detail else "-",
         "created_at": log.created_at.isoformat() if log.created_at else None,
-    } for log in logs]
+    } for log, admin_phone, target_phone in rows]
 
     return ok({"items": items, "total": total, "page": page, "size": page_size})
