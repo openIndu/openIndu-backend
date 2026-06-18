@@ -1,16 +1,21 @@
 """Document CRUD and presigned download-link API."""
 from datetime import date, datetime
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
+import logging
+
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.database import SessionLocal
 from app.core.dependencies import get_db, require_admin, require_member
 from app.models.document import Document
 from app.models.download_log import DownloadLog
 from app.models.user import User
 from app.services.storage_service import storage_service
+from app.services.rag_sync_service import sync_document
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/documents")
 BRANDS = ["siemens", "mitsubishi", "omron", "keyence", "inovance"]
 CATEGORIES = ["plc-manual", "hardware-manual", "driver-manual", "hmi-manual", "software-manual", "best-practice", "electrical-standard", "other"]
@@ -18,6 +23,36 @@ CATEGORIES = ["plc-manual", "hardware-manual", "driver-manual", "hmi-manual", "s
 
 def ok(data=None, message="操作成功"):
     return {"code": 200, "message": message, "data": data or {}}
+
+
+def _sync_uploaded_document(doc_id: int):
+    db = None
+    try:
+        db = SessionLocal()
+        doc = db.query(Document).filter(Document.id == doc_id).first()
+        if not doc:
+            return
+        doc.sync_status = "syncing"
+        db.commit()
+        sync_document(db, doc)
+        doc.sync_status = "synced"
+        doc.sync_time = datetime.utcnow()
+        db.commit()
+    except Exception as exc:
+        logger.error("Document %s background sync failed: %s", doc_id, exc)
+        if db:
+            try:
+                db.rollback()
+                doc = db.query(Document).filter(Document.id == doc_id).first()
+                if doc:
+                    doc.sync_status = "failed"
+                    doc.sync_time = datetime.utcnow()
+                    db.commit()
+            except Exception as inner_exc:
+                logger.error("Failed to update sync_status for doc %s: %s", doc_id, inner_exc)
+    finally:
+        if db:
+            db.close()
 
 
 def client_ip(request: Request) -> str | None:
@@ -37,7 +72,7 @@ async def list_documents(brand: str | None = None, category: str | None = None, 
 
 
 @router.post("/upload")
-async def upload_document(file: UploadFile = File(...), brand: str = Form(...), category: str = Form(...), description: str = Form(""), db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+async def upload_document(background_tasks: BackgroundTasks, file: UploadFile = File(...), brand: str = Form(...), category: str = Form(...), description: str = Form(""), db: Session = Depends(get_db), admin: User = Depends(require_admin)):
     if brand not in BRANDS: raise HTTPException(400, "无效品牌")
     if category not in CATEGORIES: raise HTTPException(400, "无效分类")
     if not file.filename or not file.filename.lower().endswith(".pdf"): raise HTTPException(415, "仅支持 PDF 文件")
@@ -46,7 +81,8 @@ async def upload_document(file: UploadFile = File(...), brand: str = Form(...), 
     meta = storage_service.upload_file(content, file.filename, f"documents/{brand}", file.content_type or "application/pdf")
     doc = Document(filename=meta["filename"], original_name=file.filename, brand=brand, category=category, file_size=meta["file_size"], file_hash=meta["file_hash"], oss_key=meta["oss_key"], description=description)
     db.add(doc); db.commit(); db.refresh(doc)
-    return ok(doc.to_dict(), "上传成功")
+    background_tasks.add_task(_sync_uploaded_document, doc.id)
+    return ok(doc.to_dict(), "上传成功，同步已自动启动")
 
 
 @router.get("/brands/list")

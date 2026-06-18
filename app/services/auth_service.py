@@ -10,6 +10,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.models.login_session import LoginSession
 from app.models.sms_code import SmsCode
 from app.models.token_blacklist import TokenBlacklist
 from app.models.user import User
@@ -162,8 +163,16 @@ class AuthService:
         self.blacklist_token(db, payload, reason="refresh_rotation")
         return {"user": user.to_dict(), "tokens": self.create_token_pair(user)}
 
-    def logout(self, db: Session, token: str) -> None:
-        self.blacklist_token(db, decode_token(token), reason="logout")
+    def logout(self, db: Session, token: str, user_agent: str | None = None) -> None:
+        payload = decode_token(token)
+        self.blacklist_token(db, payload, reason="logout")
+        user_id = payload.get("sub")
+        if user_id and user_agent:
+            db.query(LoginSession).filter(
+                LoginSession.user_id == int(user_id),
+                LoginSession.user_agent == user_agent,
+            ).update({"is_active": False})
+            db.commit()
 
 
 auth_service = AuthService()
