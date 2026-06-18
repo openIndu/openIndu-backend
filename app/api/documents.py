@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Reques
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.dependencies import get_db, require_admin, require_auth, require_member
+from app.core.dependencies import get_db, require_admin, require_member
 from app.models.document import Document
 from app.models.download_log import DownloadLog
 from app.models.user import User
@@ -26,7 +26,7 @@ def client_ip(request: Request) -> str | None:
 
 
 @router.get("")
-async def list_documents(brand: str | None = None, category: str | None = None, keyword: str | None = None, page: int = Query(1, ge=1), size: int = Query(20, ge=1, le=100), db: Session = Depends(get_db), user: User = Depends(require_auth)):
+async def list_documents(brand: str | None = None, category: str | None = None, keyword: str | None = None, page: int = Query(1, ge=1), size: int = Query(20, ge=1, le=100), db: Session = Depends(get_db)):
     q = db.query(Document)
     if brand: q = q.filter(Document.brand == brand)
     if category: q = q.filter(Document.category == category)
@@ -50,17 +50,17 @@ async def upload_document(file: UploadFile = File(...), brand: str = Form(...), 
 
 
 @router.get("/brands/list")
-async def brands(user: User = Depends(require_auth)):
+async def brands():
     return ok(BRANDS)
 
 
 @router.get("/categories/list")
-async def categories(user: User = Depends(require_auth)):
+async def categories():
     return ok(CATEGORIES)
 
 
 @router.get("/{doc_id}")
-async def get_document(doc_id: int, db: Session = Depends(get_db), user: User = Depends(require_auth)):
+async def get_document(doc_id: int, db: Session = Depends(get_db)):
     doc = db.query(Document).filter(Document.id == doc_id).first()
     if not doc: raise HTTPException(404, "文档不存在")
     return ok(doc.to_dict())

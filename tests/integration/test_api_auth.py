@@ -14,20 +14,26 @@ def _make_user(id=1, phone="13800138000", role="user"):
     user.id = id
     user.phone = phone
     user.role = role
+    user.nickname = None
     user.is_active = True
     user.is_blacklisted = False
-    user.to_dict.return_value = {
-        "id": id,
-        "phone": phone,
-        "role": role,
-        "is_active": True,
-        "is_blacklisted": False,
-        "blacklisted_at": None,
-        "blacklisted_by": None,
-        "tokens_invalidated_at": None,
-        "created_at": "2024-01-01T00:00:00",
-        "last_login": "2024-01-01T00:00:00",
-    }
+
+    def to_dict():
+        return {
+            "id": id,
+            "phone": phone,
+            "nickname": user.nickname,
+            "role": role,
+            "is_active": True,
+            "is_blacklisted": False,
+            "blacklisted_at": None,
+            "blacklisted_by": None,
+            "tokens_invalidated_at": None,
+            "created_at": "2024-01-01T00:00:00",
+            "last_login": "2024-01-01T00:00:00",
+        }
+
+    user.to_dict.side_effect = to_dict
     return user
 
 
@@ -163,6 +169,22 @@ class TestRegisterAndLogin:
         """GET /me without token should return 401."""
         client = _make_client(self.app)
         response = client.get("/api/v1/auth/me")
+        assert response.status_code == 401
+
+    def test_update_me(self):
+        """PATCH /me should update current user's nickname."""
+        user = _make_user(phone="13800138004")
+        client = _make_client(self.app, auth_user=user)
+        response = client.patch("/api/v1/auth/me", json={"nickname": "Tom"})
+        assert response.status_code == 200
+        data = response.json()
+        assert data["data"]["nickname"] == "Tom"
+        assert user.nickname == "Tom"
+
+    def test_update_me_unauthenticated(self):
+        """PATCH /me without token should return 401."""
+        client = _make_client(self.app)
+        response = client.patch("/api/v1/auth/me", json={"nickname": "Tom"})
         assert response.status_code == 401
 
     def test_refresh_token(self):

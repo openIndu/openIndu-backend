@@ -73,10 +73,11 @@ class TestDocumentList:
         assert "total" in data["data"]
 
     def test_list_unauthenticated(self):
-        """Listing without auth should return 401."""
+        """Listing without auth should stay public."""
         client = _make_client(self.app)
         response = client.get("/api/v1/documents")
-        assert response.status_code == 401
+        assert response.status_code == 200
+        assert "items" in response.json()["data"]
 
     def test_list_with_pagination(self):
         """Pagination parameters should be accepted."""

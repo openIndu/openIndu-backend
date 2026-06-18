@@ -68,7 +68,7 @@ def test_documents_list_upload_get(monkeypatch):
     doc = SimpleNamespace(id=1, oss_key="docs/a.pdf", original_name="a.pdf")
     doc.to_dict = lambda: {"id": doc.id}
     db.query.return_value = _chain(items=[doc], count=1)
-    result = asyncio.run(documents.list_documents(brand="siemens", keyword="a", page=1, size=20, db=db, user=_user()))
+    result = asyncio.run(documents.list_documents(brand="siemens", keyword="a", page=1, size=20, db=db))
     assert result["data"]["total"] == 1
 
     db = MagicMock()
@@ -84,15 +84,15 @@ def test_documents_list_upload_get(monkeypatch):
 
     db = MagicMock()
     db.query.return_value = _chain(first=doc)
-    result = asyncio.run(documents.get_document(1, db=db, user=_user()))
+    result = asyncio.run(documents.get_document(1, db=db))
     assert result["data"]["id"] == 1
 
 
 def test_documents_brands_categories():
     from app.api import documents
 
-    assert asyncio.run(documents.brands(user=_user()))["data"] == ["siemens", "mitsubishi", "omron", "keyence", "inovance"]
-    assert asyncio.run(documents.categories(user=_user()))["data"]
+    assert asyncio.run(documents.brands())["data"] == ["siemens", "mitsubishi", "omron", "keyence", "inovance"]
+    assert asyncio.run(documents.categories())["data"]
 
 
 @pytest.mark.parametrize("filename,expected", [("setup.exe", ".exe"), ("archive", "")])
@@ -135,12 +135,12 @@ def test_software_list_upload_get_add_delete(monkeypatch):
 
     db = MagicMock()
     db.query.return_value = _chain(items=[sw], count=1)
-    result = asyncio.run(software.list_software(page=1, size=20, keyword="Tool", db=db, user=_user()))
+    result = asyncio.run(software.list_software(page=1, size=20, keyword="Tool", db=db))
     assert result["data"]["total"] == 1
 
     db = MagicMock()
     db.query.return_value = _chain(first=sw)
-    assert asyncio.run(software.get_software(1, db=db, user=_user()))["data"]["id"] == 1
+    assert asyncio.run(software.get_software(1, db=db))["data"]["id"] == 1
 
     monkeypatch.setattr(software.storage_service, "upload_file", lambda c, n, p, t: {"oss_key": "software/x.zip", "filename": "x.zip", "file_size": 100, "file_hash": "abc"})
     file = MagicMock()
@@ -333,6 +333,18 @@ def test_auth_helpers():
     from app.api import auth
     assert auth.ok()["code"] == 200
     assert auth.ok({"a": 1})["data"]["a"] == 1
+
+
+def test_update_me_helper():
+    from app.api import auth
+
+    user = SimpleNamespace(nickname=None)
+    user.to_dict = lambda: {"nickname": user.nickname}
+    db = MagicMock()
+    result = asyncio.run(auth.update_me(auth.ProfileUpdateRequest(nickname=" Tom "), db, user))
+    assert result["data"]["nickname"] == "Tom"
+    db.commit.assert_called_once()
+    db.refresh.assert_called_once_with(user)
 
 
 def test_auth_service_validate_phone(monkeypatch):

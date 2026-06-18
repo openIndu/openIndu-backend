@@ -28,6 +28,10 @@ class RefreshRequest(BaseModel):
     refresh_token: str
 
 
+class ProfileUpdateRequest(BaseModel):
+    nickname: str | None = None
+
+
 def ok(data=None, message: str = "操作成功"):
     return {"code": 200, "message": message, "data": data or {}}
 
@@ -58,6 +62,15 @@ async def refresh(body: RefreshRequest, db: Session = Depends(get_db)):
 @router.get("/me")
 async def me(current_user: User = Depends(require_auth)):
     return ok(current_user.to_dict())
+
+
+@router.patch("/me")
+async def update_me(body: ProfileUpdateRequest, db: Session = Depends(get_db), current_user: User = Depends(require_auth)):
+    nickname = (body.nickname or "").strip()
+    current_user.nickname = nickname or None
+    db.commit()
+    db.refresh(current_user)
+    return ok(current_user.to_dict(), "资料已更新")
 
 
 @router.post("/logout")
