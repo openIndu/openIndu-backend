@@ -41,16 +41,6 @@ def _upsert_single(db: Session, section: str, body: ContentIn):
     return item.to_dict()
 
 
-@router.get("/hero")
-async def hero(db: Session = Depends(get_db)):
-    return ok(_get_single(db, "hero"))
-
-
-@router.put("/hero")
-async def update_hero(body: ContentIn, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
-    return ok(_upsert_single(db, "hero", body))
-
-
 @router.get("/solutions")
 async def solutions(db: Session = Depends(get_db)):
     return ok({"items": _list(db, "solutions")})
