@@ -6,6 +6,11 @@ Usage:
     url  = storage_service.get_download_url(oss_key)
 """
 
+import hashlib
+import hmac
+import time
+from urllib.parse import quote
+
 from app.core.config import settings
 from app.services.file_storage import FileStorageService, file_storage
 from app.services.oss_service import OSSService, oss_service
@@ -13,6 +18,8 @@ from app.services.oss_service import OSSService, oss_service
 
 class StorageService:
     """Facade that routes to the active backend."""
+
+    LOCAL_DOWNLOAD_TOKEN_TTL_SECONDS = settings.PRESIGNED_URL_EXPIRE_MINUTES * 60
 
     def __init__(self) -> None:
         self._backend = settings.STORAGE_BACKEND
@@ -39,12 +46,25 @@ class StorageService:
 
     # -- download URL ------------------------------------------------------
 
+    def _sign_local_download(self, oss_key: str, expires_at: int) -> str:
+        payload = f"{oss_key}:{expires_at}".encode("utf-8")
+        return hmac.new(settings.JWT_SECRET_KEY.encode("utf-8"), payload, hashlib.sha256).hexdigest()
+
+    def validate_local_download_token(self, oss_key: str, expires_at: int, token: str) -> bool:
+        if expires_at < int(time.time()):
+            return False
+        expected = self._sign_local_download(oss_key, expires_at)
+        return hmac.compare_digest(expected, token)
+
     def get_download_url(self, oss_key: str) -> dict:
         """Return a dict with 'url' and 'expires_in' suitable for the API response."""
         if self._backend == "local":
+            normalized_key = oss_key.lstrip("/")
+            expires_at = int(time.time()) + self.LOCAL_DOWNLOAD_TOKEN_TTL_SECONDS
+            token = self._sign_local_download(normalized_key, expires_at)
             return {
-                "url": f"/api/v1/files/{oss_key.lstrip('/')}",
-                "expires_in": None,  # local URLs don't expire
+                "url": f"/api/v1/files/{quote(normalized_key)}?expires={expires_at}&token={token}",
+                "expires_in": self.LOCAL_DOWNLOAD_TOKEN_TTL_SECONDS,
             }
         # S3 / OSS mode: generate presigned URL
         url = self._impl.generate_presigned_url(

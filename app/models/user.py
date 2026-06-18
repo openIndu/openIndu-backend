@@ -9,6 +9,7 @@ class User(Base):
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     phone = Column(String(20), unique=True, nullable=False, index=True)
+    nickname = Column(String(50), nullable=True)
     role = Column(String(20), nullable=False, default="user")
     is_active = Column(Boolean, nullable=False, default=True)
     is_blacklisted = Column(Boolean, nullable=False, default=False)
@@ -22,6 +23,7 @@ class User(Base):
         return {
             "id": self.id,
             "phone": self.phone,
+            "nickname": self.nickname,
             "role": self.role,
             "is_active": self.is_active,
             "is_blacklisted": self.is_blacklisted,

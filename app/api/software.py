@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Reques
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.dependencies import get_db, require_admin, require_auth, require_member
+from app.core.dependencies import get_db, require_admin, require_member
 from app.models.download_log import DownloadLog
 from app.models.software import Software, SoftwareVersion
 from app.models.user import User
@@ -38,7 +38,7 @@ def _check_daily_limit(db: Session, user: User):
 
 
 @router.get("")
-async def list_software(brand: str | None = None, category: str | None = None, keyword: str | None = None, page: int = Query(1, ge=1), size: int = Query(20, ge=1, le=100), db: Session = Depends(get_db), user: User = Depends(require_auth)):
+async def list_software(brand: str | None = None, category: str | None = None, keyword: str | None = None, page: int = Query(1, ge=1), size: int = Query(20, ge=1, le=100), db: Session = Depends(get_db)):
     q = db.query(Software).filter(Software.is_active.is_(True))
     if brand: q = q.filter(Software.brand == brand)
     if category: q = q.filter(Software.category == category)
@@ -62,13 +62,18 @@ async def upload_software(file: UploadFile = File(...), brand: str = Form(...), 
     return ok(sw.to_dict(include_versions=True), "上传成功")
 
 
+@router.get("/brands/list")
+async def brands():
+    return ok(BRANDS)
+
+
 @router.get("/categories/list")
-async def categories(user: User = Depends(require_auth)):
+async def categories():
     return ok(CATEGORIES)
 
 
 @router.get("/{software_id}")
-async def get_software(software_id: int, db: Session = Depends(get_db), user: User = Depends(require_auth)):
+async def get_software(software_id: int, db: Session = Depends(get_db)):
     sw = db.query(Software).filter(Software.id == software_id).first()
     if not sw: raise HTTPException(404, "软件不存在")
     return ok(sw.to_dict(include_versions=True))
