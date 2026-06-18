@@ -9,6 +9,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from app.core.database import SessionLocal
 from app.models.login_session import LoginSession
 from app.services.auth_service import decode_token
+from app.services.geo_service import resolve_ip_geo
 
 
 def _now():
@@ -34,6 +35,7 @@ class OnlineStatsMiddleware(BaseHTTPMiddleware):
                         user_id = int(payload["sub"])
                         ip = _client_ip(request)
                         ua = request.headers.get("user-agent", "")[:512]
+                        geo = resolve_ip_geo(ip)
                         session = db.query(LoginSession).filter(
                             LoginSession.user_id == user_id,
                             LoginSession.ip_address == ip,
@@ -42,8 +44,16 @@ class OnlineStatsMiddleware(BaseHTTPMiddleware):
                         if session:
                             session.last_active_at = _now()
                             session.is_active = True
+                            session.geo_location = str(geo["name"])
                         else:
-                            db.add(LoginSession(user_id=user_id, ip_address=ip, user_agent=ua, last_active_at=_now(), is_active=True))
+                            db.add(LoginSession(
+                                user_id=user_id,
+                                ip_address=ip,
+                                user_agent=ua,
+                                geo_location=str(geo["name"]),
+                                last_active_at=_now(),
+                                is_active=True,
+                            ))
                         db.commit()
                     except IntegrityError:
                         db.rollback()
