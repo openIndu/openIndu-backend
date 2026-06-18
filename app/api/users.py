@@ -32,7 +32,7 @@ def _enrich_user_dict(db: Session, user_dict: dict, user_id: int) -> dict:
         LoginSession.user_id == user_id,
         LoginSession.is_active.is_(True),
     ).first()
-    user_dict["is_online"] = active_session is not None
+    user_dict["online"] = active_session is not None
 
     last_session = db.query(LoginSession).filter(
         LoginSession.user_id == user_id,
@@ -43,8 +43,16 @@ def _enrich_user_dict(db: Session, user_dict: dict, user_id: int) -> dict:
 
 
 @router.get("")
-async def list_users(page: int = Query(1, ge=1), size: int = Query(20, ge=1, le=100), db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+async def list_users(
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+    keyword: str | None = Query(None),
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
     q = db.query(User).order_by(User.created_at.desc())
+    if keyword:
+        q = q.filter(User.phone.ilike(f"%{keyword}%"))
     total = q.count()
     items = [_enrich_user_dict(db, u.to_dict(), u.id) for u in q.offset((page - 1) * size).limit(size).all()]
     return ok({"items": items, "total": total, "page": page, "size": size})
