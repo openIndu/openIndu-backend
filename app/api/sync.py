@@ -37,7 +37,7 @@ def _run_sync_background(mode: str):
 @router.post("/trigger")
 async def trigger_sync(
     background_tasks: BackgroundTasks,
-    body: TriggerBody = Body(default_factory=TriggerBody),
+    body: TriggerBody = Body(default=TriggerBody()),
     admin: User = Depends(require_admin),
 ):
     background_tasks.add_task(_run_sync_background, body.mode)

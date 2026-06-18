@@ -89,6 +89,7 @@ async def login_history(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
     keyword: str | None = Query(None),
+    status: str | None = Query(None),  # 'online' | 'offline' | None
     db: Session = Depends(get_db),
     admin: User = Depends(require_admin),
 ):
@@ -99,6 +100,10 @@ async def login_history(
     )
     if keyword:
         q = q.filter(User.phone.ilike(f"%{keyword}%"))
+    if status == "online":
+        q = q.filter(LoginSession.is_active.is_(True))
+    elif status == "offline":
+        q = q.filter(LoginSession.is_active.is_(False))
     total = q.count()
     rows = q.offset((page - 1) * size).limit(size).all()
     items = [{
