@@ -61,8 +61,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.add_middleware(SlowAPIMiddleware)
-app.add_middleware(TokenBlacklistMiddleware)
 app.add_middleware(OnlineStatsMiddleware)
+app.add_middleware(TokenBlacklistMiddleware)
 
 for router in [auth.router, users.router, stats.router, admin.router, documents.router, software.router, sync.router, config.router, brand_mapping.router, files.router]:
     app.include_router(router, prefix="/api/v1")
