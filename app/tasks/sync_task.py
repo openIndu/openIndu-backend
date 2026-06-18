@@ -16,8 +16,8 @@ from app.services.rag_sync_service import scan_documents, sync_document
 
 logger = logging.getLogger(__name__)
 
-MAX_RETRIES = 3
-RETRY_INTERVAL_SECONDS = 30
+MAX_RETRIES = 2
+RETRY_INTERVAL_SECONDS = 3
 
 
 def now():
