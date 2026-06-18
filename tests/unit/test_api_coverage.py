@@ -254,20 +254,36 @@ def test_files_api_local_and_error_paths(tmp_path, monkeypatch):
 
     monkeypatch.setattr(files.storage_service, "_backend", "s3")
     with pytest.raises(HTTPException) as exc:
-        asyncio.run(files.download_file("missing.pdf", _user()))
+        asyncio.run(files.download_file("missing.pdf", 1, "bad-token"))
     assert exc.value.status_code == 404
 
     monkeypatch.setattr(files.storage_service, "_backend", "local")
+    monkeypatch.setattr(files.storage_service, "validate_local_download_token", lambda key, expires, token: False)
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(files.download_file("missing.pdf", 1, "bad-token"))
+    assert exc.value.status_code == 401
+
+    monkeypatch.setattr(files.storage_service, "validate_local_download_token", lambda key, expires, token: True)
     monkeypatch.setattr(files.storage_service, "get_file_path", lambda key: (_ for _ in ()).throw(FileNotFoundError()))
     with pytest.raises(HTTPException) as exc:
-        asyncio.run(files.download_file("missing.pdf", _user()))
+        asyncio.run(files.download_file("missing.pdf", 1, "token"))
     assert exc.value.status_code == 404
 
     target = tmp_path / "ok.pdf"
     target.write_bytes(b"pdf")
     monkeypatch.setattr(files.storage_service, "get_file_path", lambda key: target)
-    response = asyncio.run(files.download_file("ok.pdf", _user()))
+    response = asyncio.run(files.download_file("ok.pdf", 1, "token"))
     assert str(target) in response.path
+
+
+def test_files_api_creates_debug_placeholder(tmp_path, monkeypatch):
+    from app.api import files
+
+    monkeypatch.setattr(files.settings, "DATA_DIR", str(tmp_path))
+    target = tmp_path / "software" / "debug-tool.zip"
+    files.ensure_debug_placeholder("software/debug-tool.zip")
+    assert target.exists()
+    assert target.read_bytes() == files.DEBUG_PLACEHOLDERS["software/debug-tool.zip"]
 
 
 def test_storage_service_facade_paths(monkeypatch):
@@ -288,7 +304,10 @@ def test_storage_service_facade_paths(monkeypatch):
     assert service.is_local is True
     assert service.upload_file(b"x", "a.pdf", "docs") == {"filename": "a.pdf"}
     assert service.list_objects("docs") == [{"key": "a"}]
-    assert service.get_download_url("/docs/a.pdf") == {"url": "/api/v1/files/docs/a.pdf", "expires_in": None}
+    local_download = service.get_download_url("/docs/a.pdf")
+    assert local_download["url"].startswith("/api/v1/files/docs/a.pdf?expires=")
+    assert "&token=" in local_download["url"]
+    assert local_download["expires_in"] == service.LOCAL_DOWNLOAD_TOKEN_TTL_SECONDS
     assert service.get_file_path("docs/a.pdf") == "path"
     service.delete_file("docs/a.pdf")
     local_impl.delete_file.assert_called_once_with("docs/a.pdf")

@@ -62,6 +62,11 @@ async def upload_software(file: UploadFile = File(...), brand: str = Form(...), 
     return ok(sw.to_dict(include_versions=True), "上传成功")
 
 
+@router.get("/brands/list")
+async def brands():
+    return ok(BRANDS)
+
+
 @router.get("/categories/list")
 async def categories():
     return ok(CATEGORIES)
