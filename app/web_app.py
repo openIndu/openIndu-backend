@@ -9,7 +9,7 @@ from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
 from starlette.responses import JSONResponse
 
-from app.api import auth, brand_mapping, config, documents, files, portal, software, stats, sync, users
+from app.api import admin, auth, brand_mapping, config, documents, files, portal, software, stats, sync, users
 from app.core.database import engine
 from app.middleware.online_stats import OnlineStatsMiddleware
 from app.middleware.token_blacklist import TokenBlacklistMiddleware
@@ -55,7 +55,7 @@ async def generic_exception_handler(request: Request, exc: Exception):
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://openindu.com", "https://admin.openindu.com", "http://localhost:3000", "http://localhost:5173"],
+    allow_origins=["https://openindu.com", "https://admin.openindu.com", "http://localhost:3000", "http://localhost:3001", "http://localhost:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -64,7 +64,7 @@ app.add_middleware(SlowAPIMiddleware)
 app.add_middleware(TokenBlacklistMiddleware)
 app.add_middleware(OnlineStatsMiddleware)
 
-for router in [auth.router, portal.router, users.router, stats.router, documents.router, software.router, sync.router, config.router, brand_mapping.router, files.router]:
+for router in [auth.router, portal.router, users.router, stats.router, admin.router, documents.router, software.router, sync.router, config.router, brand_mapping.router, files.router]:
     app.include_router(router, prefix="/api/v1")
 
 
