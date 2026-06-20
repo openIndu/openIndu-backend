@@ -15,6 +15,8 @@ from app.services.geo_service import GEO_POINTS
 
 router = APIRouter(prefix="/stats")
 
+CST = timezone(timedelta(hours=8))  # Asia/Shanghai
+
 
 def ok(data=None, message="操作成功"):
     return {"code": 200, "message": message, "data": data or {}}
@@ -22,6 +24,30 @@ def ok(data=None, message="操作成功"):
 
 def _now():
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _to_naive_utc(dt: datetime) -> datetime:
+    """Convert a timezone-aware datetime to naive UTC for DB comparison."""
+    return dt.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def _today_range_utc() -> tuple[datetime, datetime]:
+    """Return [today 00:00 CST, tomorrow 00:00 CST) as naive UTC."""
+    now_cst = datetime.now(CST)
+    start_cst = now_cst.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_cst = start_cst + timedelta(days=1)
+    return (_to_naive_utc(start_cst), _to_naive_utc(end_cst))
+
+
+def _month_range_utc() -> tuple[datetime, datetime]:
+    """Return [1st of this month 00:00 CST, 1st of next month 00:00 CST) as naive UTC."""
+    now_cst = datetime.now(CST)
+    start_cst = now_cst.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    if start_cst.month == 12:
+        end_cst = start_cst.replace(year=start_cst.year + 1, month=1)
+    else:
+        end_cst = start_cst.replace(month=start_cst.month + 1)
+    return (_to_naive_utc(start_cst), _to_naive_utc(end_cst))
 
 
 @router.get("/dashboard")
@@ -113,6 +139,56 @@ async def dashboard_stats(db: Session = Depends(get_db), admin: User = Depends(r
 
     geo_list = sorted(geo.values(), key=lambda x: -(int(x["visitors"]) + int(x["online"])))
 
+    # ---- period stats: today / this month (Asia/Shanghai) ----
+    today_start, today_end = _today_range_utc()
+    month_start, month_end = _month_range_utc()
+
+    current_active_users = db.query(func.count(func.distinct(LoginSession.user_id))).filter(
+        LoginSession.is_active.is_(True)
+    ).scalar() or 0
+
+    today_active_users = db.query(func.count(func.distinct(VisitEvent.user_id))).filter(
+        VisitEvent.user_id.isnot(None),
+        VisitEvent.created_at >= today_start,
+        VisitEvent.created_at < today_end,
+    ).scalar() or 0
+
+    today_new_users = db.query(func.count(User.id)).filter(
+        User.created_at >= today_start,
+        User.created_at < today_end,
+    ).scalar() or 0
+
+    today_new_docs = db.query(func.count(Document.id)).filter(
+        Document.upload_time >= today_start,
+        Document.upload_time < today_end,
+    ).scalar() or 0
+
+    today_new_software = db.query(func.count(Software.id)).filter(
+        Software.created_at >= today_start,
+        Software.created_at < today_end,
+    ).scalar() or 0
+
+    month_active_users = db.query(func.count(func.distinct(VisitEvent.user_id))).filter(
+        VisitEvent.user_id.isnot(None),
+        VisitEvent.created_at >= month_start,
+        VisitEvent.created_at < month_end,
+    ).scalar() or 0
+
+    month_new_users = db.query(func.count(User.id)).filter(
+        User.created_at >= month_start,
+        User.created_at < month_end,
+    ).scalar() or 0
+
+    month_new_docs = db.query(func.count(Document.id)).filter(
+        Document.upload_time >= month_start,
+        Document.upload_time < month_end,
+    ).scalar() or 0
+
+    month_new_software = db.query(func.count(Software.id)).filter(
+        Software.created_at >= month_start,
+        Software.created_at < month_end,
+    ).scalar() or 0
+
     return ok({
         "total_users": total_users,
         "total_docs": total_docs,
@@ -126,6 +202,16 @@ async def dashboard_stats(db: Session = Depends(get_db), admin: User = Depends(r
         "daily_visitors": daily_visitors,
         "daily_logins": daily_logins,
         "geo_distribution": geo_list,
+        # period stats
+        "current_active_users": current_active_users,
+        "today_active_users": today_active_users,
+        "today_new_users": today_new_users,
+        "today_new_docs": today_new_docs,
+        "today_new_software": today_new_software,
+        "month_active_users": month_active_users,
+        "month_new_users": month_new_users,
+        "month_new_docs": month_new_docs,
+        "month_new_software": month_new_software,
     })
 
 
