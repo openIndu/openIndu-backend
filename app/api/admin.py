@@ -23,7 +23,6 @@ async def audit_logs(
     db: Session = Depends(get_db),
     admin_user: User = Depends(require_admin),
 ):
-    AdminUser = User.__class__  # just an alias trick — use aliased()
     from sqlalchemy.orm import aliased
     AdminAlias = aliased(User, name="admin_alias")
     TargetAlias = aliased(User, name="target_alias")

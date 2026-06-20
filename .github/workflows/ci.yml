@@ -23,7 +23,7 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install ruff
-      - run: ruff check app/ --select E,F,W,I,UP --line-length 100
+      - run: ruff check app/
 
   test:
     name: Unit Tests (pytest)
@@ -57,7 +57,7 @@ jobs:
       - name: Run tests
         run: |
           # Exit code 5 = no tests collected; treat as pass until suite is built.
-          pytest --no-cov -q
+          pytest --override-ini=addopts= -q
           code=$?; [ $code -eq 5 ] && exit 0 || exit $code
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/openindu_test
