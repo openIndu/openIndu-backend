@@ -76,30 +76,20 @@ async def list_documents(brand: str | None = None, category: str | None = None, 
 
 @router.post("/upload")
 async def upload_document(background_tasks: BackgroundTasks, file: UploadFile = File(...), brand: str = Form(...), category: str = Form(...), description: str = Form(""), db: Session = Depends(get_db), admin: User = Depends(require_admin)):
-<<<<<<< HEAD
-    if brand not in BRANDS: raise HTTPException(400, "无效品牌")
-    if category not in CATEGORIES: raise HTTPException(400, "无效分类")
-    if not file.filename or not file.filename.lower().endswith(".pdf"): raise HTTPException(415, "仅支持 PDF 文件")
-=======
     if brand not in BRANDS:
         raise HTTPException(400, "无效品牌")
     if category not in CATEGORIES:
         raise HTTPException(400, "无效分类")
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(415, "仅支持 PDF 文件")
->>>>>>> origin/main
     content = await file.read()
     if len(content) > settings.DOCUMENT_MAX_SIZE_MB * 1024 * 1024:
         raise HTTPException(413, "文件大小超过限制")
     meta = storage_service.upload_file(content, file.filename, f"documents/{brand}", file.content_type or "application/pdf")
     doc = Document(filename=meta["filename"], original_name=file.filename, brand=brand, category=category, file_size=meta["file_size"], file_hash=meta["file_hash"], oss_key=meta["oss_key"], description=description)
-<<<<<<< HEAD
-    db.add(doc); db.commit(); db.refresh(doc)
-=======
     db.add(doc)
     db.commit()
     db.refresh(doc)
->>>>>>> origin/main
     background_tasks.add_task(_sync_uploaded_document, doc.id)
     return ok(doc.to_dict(), "上传成功，同步已自动启动")
 
