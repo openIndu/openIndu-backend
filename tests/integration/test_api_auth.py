@@ -208,7 +208,24 @@ class TestRegisterAndLogin:
         """POST /logout should succeed."""
         user = _make_user(phone="13800138007")
         client = _make_client(self.app, auth_user=user)
+        # Generate a valid JWT token for the middleware to decode
+        from jose import jwt
+        from app.core.config import settings
+        import time
+        payload = {
+            "sub": "1",
+            "phone": "13800138007",
+            "role": "user",
+            "type": "access",
+            "jti": "test-jti",
+            "iat": int(time.time()),
+            "exp": int(time.time()) + 3600
+        }
+        valid_token = jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
+
+        # conftest.py creates all tables on the shared file-based SQLite database,
+        # so the middleware's SessionLocal can access them directly.
         with patch("app.api.auth.auth_service.logout"):
-            response = client.post("/api/v1/auth/logout", headers={"Authorization": "Bearer test-access-token"})
+            response = client.post("/api/v1/auth/logout", headers={"Authorization": f"Bearer {valid_token}"})
             assert response.status_code == 200
             assert response.json()["code"] == 200
