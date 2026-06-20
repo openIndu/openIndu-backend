@@ -32,6 +32,11 @@ class ProfileUpdateRequest(BaseModel):
     nickname: str | None = None
 
 
+class PhoneChangeRequest(BaseModel):
+    new_phone: str
+    code: str
+
+
 def ok(data=None, message: str = "操作成功"):
     return {"code": 200, "message": message, "data": data or {}}
 
@@ -78,3 +83,27 @@ async def logout(request: Request, credentials: HTTPAuthorizationCredentials = D
     ua = request.headers.get("user-agent", "")[:512]
     auth_service.logout(db, credentials.credentials, user_agent=ua)
     return ok(message="已登出")
+
+
+@router.delete("/me")
+async def delete_account(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_auth),
+):
+    """Permanently delete user account and all associated data."""
+    ua = request.headers.get("user-agent", "")[:512]
+    auth_service.delete_account(db, current_user, credentials.credentials, user_agent=ua)
+    return ok(message="账号已注销")
+
+
+@router.post("/change-phone")
+async def change_phone(
+    body: PhoneChangeRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_auth),
+):
+    """Change user phone number with verification code."""
+    auth_service.change_phone(db, current_user, body.new_phone, body.code)
+    return ok({"user": current_user.to_dict()}, "手机号已更新")

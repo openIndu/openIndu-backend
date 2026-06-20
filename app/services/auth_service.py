@@ -23,7 +23,13 @@ def utcnow() -> datetime:
 
 
 def decode_token(token: str) -> dict:
-    return jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+    try:
+        return jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+    except Exception:  # Catch all JWT-related errors (invalid, expired, malformed)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="无效或过期的 token"
+        )
 
 
 class AuthService:
@@ -125,7 +131,7 @@ class AuthService:
             raise HTTPException(status_code=400, detail="验证码错误或已过期")
         user = db.query(User).filter(User.phone == phone).first()
         if not user:
-            raise HTTPException(status_code=404, detail="用户不存在，请先注册")
+            raise HTTPException(status_code=400, detail="用户不存在，请先注册")
         if not user.is_active or user.is_blacklisted:
             raise HTTPException(status_code=403, detail="账号已被禁用")
         user.last_login = utcnow()
@@ -173,6 +179,43 @@ class AuthService:
                 LoginSession.user_agent == user_agent,
             ).update({"is_active": False})
             db.commit()
+
+    def delete_account(self, db: Session, user: User, token: str, user_agent: str | None = None) -> None:
+        """Permanently delete user account and invalidate all tokens."""
+        # Blacklist current token
+        payload = decode_token(token)
+        self.blacklist_token(db, payload, reason="account_deleted")
+
+        # Invalidate all user tokens
+        user.tokens_invalidated_at = utcnow()
+        db.commit()
+
+        # Delete user data (soft delete via blacklisting + marking inactive)
+        user.is_active = False
+        user.is_blacklisted = True
+        user.blacklisted_at = utcnow()
+        db.commit()
+
+        # Clear login sessions
+        db.query(LoginSession).filter(LoginSession.user_id == user.id).update({"is_active": False})
+        db.commit()
+
+    def change_phone(self, db: Session, user: User, new_phone: str, code: str) -> None:
+        """Change user phone number with verification."""
+        self._validate_phone(new_phone)
+
+        # Verify code for the new phone
+        if not self.verify_code(db, new_phone, code):
+            raise HTTPException(status_code=400, detail="验证码错误或已过期")
+
+        # Check if new phone is already registered
+        existing = db.query(User).filter(User.phone == new_phone, User.id != user.id).first()
+        if existing:
+            raise HTTPException(status_code=409, detail="该手机号已被注册")
+
+        user.phone = new_phone
+        db.commit()
+        db.refresh(user)
 
 
 auth_service = AuthService()
