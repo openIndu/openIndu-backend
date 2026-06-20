@@ -5,7 +5,6 @@ document content into Milvus as vector embeddings for MCP tool retrieval.
 """
 
 import logging
-import time
 from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session

@@ -8,7 +8,6 @@ from sqlalchemy.orm import Session
 from app.core.dependencies import get_db, require_admin
 from app.models.admin_audit_log import AdminAuditLog
 from app.models.login_session import LoginSession
-from app.models.token_blacklist import TokenBlacklist
 from app.models.user import User
 
 router = APIRouter(prefix="/users")

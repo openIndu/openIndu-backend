@@ -4,7 +4,6 @@ Replaces MinIO/OSS for business file storage (MinIO is kept only for Milvus inte
 """
 
 import hashlib
-import os
 import uuid
 from pathlib import Path
 

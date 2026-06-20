@@ -12,8 +12,8 @@ import time
 from urllib.parse import quote
 
 from app.core.config import settings
-from app.services.file_storage import FileStorageService, file_storage
-from app.services.oss_service import OSSService, oss_service
+from app.services.file_storage import file_storage
+from app.services.oss_service import oss_service
 
 
 class StorageService:

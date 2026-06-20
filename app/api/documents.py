@@ -11,8 +11,8 @@ from app.core.dependencies import get_db, require_admin, require_member
 from app.models.document import Document
 from app.models.download_log import DownloadLog
 from app.models.user import User
-from app.services.storage_service import storage_service
 from app.services.rag_sync_service import sync_document
+from app.services.storage_service import storage_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/documents")
