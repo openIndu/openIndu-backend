@@ -79,7 +79,7 @@ def test_documents_list_upload_get(monkeypatch):
     async def read():
         return b"%PDF"
     file.read = read
-    result = asyncio.run(documents.upload_document(file=file, brand="siemens", category="plc-manual", description="desc", db=db, admin=_user()))
+    result = asyncio.run(documents.upload_document(background_tasks=MagicMock(), file=file, brand="siemens", category="plc-manual", description="desc", db=db, admin=_user()))
     assert "上传成功" in result["message"]
 
     db = MagicMock()
@@ -209,15 +209,18 @@ def test_stats_and_sync_apis(monkeypatch):
     assert asyncio.run(stats.online(db, _user()))["data"]["online_users"] == 1
 
     db = MagicMock()
-    db.query.return_value.order_by.return_value.count.return_value = 1
-    db.query.return_value.order_by.return_value.offset.return_value.limit.return_value.all.return_value = [session]
-    assert asyncio.run(stats.login_history(page=1, size=20, db=db, admin=_user()))["data"]["total"] == 1
+    lh_q = db.query.return_value.join.return_value.order_by.return_value
+    lh_q.count.return_value = 1
+    lh_q.offset.return_value.limit.return_value.all.return_value = []
+    assert asyncio.run(stats.login_history(page=1, size=20, keyword=None, status=None, db=db, admin=_user()))["data"]["total"] == 1
 
     db = MagicMock()
     db.query.return_value.all.return_value = [("pending",), ("synced",), ("synced",)]
     assert asyncio.run(sync.sync_status(db, _user()))["data"]["documents"]["synced"] == 2
-    monkeypatch.setattr(sync, "run_sync_once", lambda db: {"processed": 1})
-    assert asyncio.run(sync.trigger_sync(db, _user()))["data"]["processed"] == 1
+    bg = MagicMock()
+    result = asyncio.run(sync.trigger_sync(bg, sync.TriggerBody(), _user()))
+    assert result["data"]["mode"] == "incremental"
+    assert result["data"]["status"] == "queued"
 
 
 def test_users_helpers_and_actions():

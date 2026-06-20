@@ -45,7 +45,6 @@ def run_sync_once(db: Session) -> dict:
     for change in changes:
         action = change["action"]
         doc = change["document"]
-        oss_key = change["oss_key"]
 
         if action == "delete":
             # Remove from Milvus if it was previously synced

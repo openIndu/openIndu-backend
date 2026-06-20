@@ -47,8 +47,8 @@ class StorageService:
     # -- download URL ------------------------------------------------------
 
     def _sign_local_download(self, oss_key: str, expires_at: int) -> str:
-        payload = f"{oss_key}:{expires_at}".encode("utf-8")
-        return hmac.new(settings.JWT_SECRET_KEY.encode("utf-8"), payload, hashlib.sha256).hexdigest()
+        payload = f"{oss_key}:{expires_at}".encode()
+        return hmac.new(settings.JWT_SECRET_KEY.encode(), payload, hashlib.sha256).hexdigest()
 
     def validate_local_download_token(self, oss_key: str, expires_at: int, token: str) -> bool:
         if expires_at < int(time.time()):
