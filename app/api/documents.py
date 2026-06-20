@@ -13,7 +13,6 @@ from app.models.download_log import DownloadLog
 from app.models.user import User
 from app.services.rag_sync_service import sync_document
 from app.services.storage_service import storage_service
-from app.services.rag_sync_service import sync_document
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/documents")
