@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install ruff
+      - run: ruff check app/
+
+  test:
+    name: Unit Tests (pytest)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: openindu_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install core dependencies (skip heavy ML packages)
+        run: |
+          # sentence-transformers / pymilvus / PyMuPDF require GPU or native
+          # builds; they are tested in staging, not in CI.
+          grep -v -E '^(sentence-transformers|pymilvus|PyMuPDF)' requirements.txt \
+            | pip install -r /dev/stdin
+      - name: Run tests
+        run: |
+          # Exit code 5 = no tests collected; treat as pass until suite is built.
+          pytest --override-ini=addopts= -q
+          code=$?; [ $code -eq 5 ] && exit 0 || exit $code
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/openindu_test
+          JWT_SECRET_KEY: ci-test-secret-key-32chars-padded
+          SMS_MOCK_ENABLED: "true"
+          STORAGE_BACKEND: local
