@@ -8,7 +8,6 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.database import SessionLocal
-from app.models.document import Document
 from app.models.login_session import LoginSession
 from app.models.sync_log import SyncLog
 from app.models.token_blacklist import TokenBlacklist
@@ -46,7 +45,6 @@ def run_sync_once(db: Session) -> dict:
     for change in changes:
         action = change["action"]
         doc = change["document"]
-        oss_key = change["oss_key"]
 
         if action == "delete":
             # Remove from Milvus if it was previously synced

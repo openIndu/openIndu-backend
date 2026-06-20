@@ -1,0 +1,8 @@
+line-length = 120
+exclude = ["alembic/"]
+
+[lint]
+select = ["E", "F", "W", "I", "UP"]
+# E501: long lines (cosmetic, existing code style)
+# E701/E702: multi-statement lines (existing code style — address incrementally)
+ignore = ["E501", "E701", "E702"]

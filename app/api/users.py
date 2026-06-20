@@ -8,7 +8,6 @@ from sqlalchemy.orm import Session
 from app.core.dependencies import get_db, require_admin
 from app.models.admin_audit_log import AdminAuditLog
 from app.models.login_session import LoginSession
-from app.models.token_blacklist import TokenBlacklist
 from app.models.user import User
 
 router = APIRouter(prefix="/users")
@@ -32,7 +31,7 @@ def _enrich_user_dict(db: Session, user_dict: dict, user_id: int) -> dict:
         LoginSession.user_id == user_id,
         LoginSession.is_active.is_(True),
     ).first()
-    user_dict["online"] = active_session is not None
+    user_dict["is_online"] = active_session is not None
 
     last_session = db.query(LoginSession).filter(
         LoginSession.user_id == user_id,

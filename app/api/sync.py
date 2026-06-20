@@ -5,8 +5,8 @@ from fastapi import APIRouter, BackgroundTasks, Body, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import get_db, require_admin, require_auth
 from app.core.database import SessionLocal
+from app.core.dependencies import get_db, require_admin, require_auth
 from app.models.document import Document
 from app.models.sync_log import SyncLog
 from app.models.user import User
