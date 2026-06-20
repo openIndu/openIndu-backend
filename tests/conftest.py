@@ -2,10 +2,40 @@
 import os
 import tempfile
 
-# Force SQLite before any app module is imported
-os.environ["DATABASE_URL"] = "sqlite:///:memory:"
-
 import pytest
+
+# Use a shared temp file so ALL engines (conftest, middleware, etc.) connect to the SAME database
+TEST_DB_PATH = os.path.join(tempfile.gettempdir(), "openindu_test.db")
+os.environ["DATABASE_URL"] = f"sqlite:///{TEST_DB_PATH}"
+
+# Remove stale test db from previous runs
+if os.path.exists(TEST_DB_PATH):
+    try:
+        os.remove(TEST_DB_PATH)
+    except OSError:
+        pass
+
+# Now import app modules - they'll use the shared file database
+from app.core.config import settings
+from app.models import Base
+
+# Import ALL model modules so they register with Base.metadata
+import app.models.admin_audit_log  # noqa
+import app.models.document  # noqa
+import app.models.download_log  # noqa
+import app.models.login_session  # noqa
+import app.models.portal_content  # noqa
+import app.models.sms_code  # noqa
+import app.models.software  # noqa
+import app.models.sync_log  # noqa
+import app.models.system_config  # noqa
+import app.models.token_blacklist  # noqa
+import app.models.user  # noqa
+import app.models.visit_event  # noqa
+
+# Create all database tables on the app's engine (shared file)
+from app.core.database import engine
+Base.metadata.create_all(bind=engine)
 
 
 @pytest.fixture(scope="function")
