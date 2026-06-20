@@ -189,6 +189,47 @@ async def dashboard_stats(db: Session = Depends(get_db), admin: User = Depends(r
         Software.created_at < month_end,
     ).scalar() or 0
 
+    # ---- monthly trends (1st to today, zero-filled) ----
+    today_cst = datetime.now(CST).date()
+    month_start_cst_date = today_cst.replace(day=1)
+    month_days = (today_cst - month_start_cst_date).days + 1
+
+    monthly_registrations: list[dict[str, int | str]] = []
+    monthly_visitors: list[dict[str, int | str]] = []
+    for i in range(month_days):
+        day_date = month_start_cst_date + timedelta(days=i)
+        monthly_registrations.append({"date": str(day_date), "count": 0})
+        monthly_visitors.append({"date": str(day_date), "count": 0})
+
+    reg_month_rows = (
+        db.query(func.date(User.created_at).label("day"), func.count(User.id).label("cnt"))
+        .filter(User.created_at >= month_start, User.created_at < month_end)
+        .group_by(func.date(User.created_at))
+        .order_by(func.date(User.created_at))
+        .all()
+    )
+    reg_map = {str(r.day): r.cnt for r in reg_month_rows}
+    for item in monthly_registrations:
+        item["count"] = reg_map.get(item["date"], 0)
+
+    visit_month_rows = (
+        db.query(
+            func.date(VisitEvent.created_at).label("day"),
+            func.count(func.distinct(VisitEvent.user_id)).label("cnt"),
+        )
+        .filter(
+            VisitEvent.user_id.isnot(None),
+            VisitEvent.created_at >= month_start,
+            VisitEvent.created_at < month_end,
+        )
+        .group_by(func.date(VisitEvent.created_at))
+        .order_by(func.date(VisitEvent.created_at))
+        .all()
+    )
+    visit_map = {str(r.day): r.cnt for r in visit_month_rows}
+    for item in monthly_visitors:
+        item["count"] = visit_map.get(item["date"], 0)
+
     return ok({
         "total_users": total_users,
         "total_docs": total_docs,
@@ -212,6 +253,8 @@ async def dashboard_stats(db: Session = Depends(get_db), admin: User = Depends(r
         "month_new_users": month_new_users,
         "month_new_docs": month_new_docs,
         "month_new_software": month_new_software,
+        "monthly_registrations": monthly_registrations,
+        "monthly_visitors": monthly_visitors,
     })
 
 
