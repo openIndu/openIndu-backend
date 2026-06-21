@@ -17,6 +17,7 @@ class Software(Base):
     download_count = Column(Integer, nullable=False, default=0)
     description = Column(Text, nullable=True)
     is_active = Column(Boolean, nullable=False, default=True)
+    is_published = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
 
     versions = relationship("SoftwareVersion", back_populates="software", cascade="all, delete-orphan")
@@ -32,6 +33,7 @@ class Software(Base):
             "download_count": self.download_count,
             "description": self.description,
             "is_active": self.is_active,
+            "is_published": self.is_published,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
         if include_versions:
