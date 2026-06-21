@@ -15,8 +15,8 @@ class SystemConfig(Base):
 
     def to_dict(self) -> dict:
         return {
-            "key": self.config_key,
-            "value": self.config_value,
+            "config_key": self.config_key,
+            "config_value": self.config_value,
             "description": self.description,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
