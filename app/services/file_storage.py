@@ -65,7 +65,7 @@ class FileStorageService:
         objects: list[dict] = []
         target_dir = self._root / prefix.strip("/")
         if target_dir.exists():
-            for f in target_dir.iterdir():
+            for f in target_dir.rglob("*"):
                 if f.is_file():
                     st = f.stat()
                     objects.append({

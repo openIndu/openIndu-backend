@@ -15,6 +15,33 @@ from app.services.storage_service import storage_service
 
 logger = logging.getLogger(__name__)
 
+# Global singleton: reuse the embedding model across all sync calls.
+# Loading BGE-M3 on CPU takes seconds — doing it once avoids repeated
+# per-document model loads that dominate the upload delay.
+_embedding_model = None
+
+
+def _get_embedding_model():
+    """Return the global SentenceTransformer instance, loading on first call."""
+    global _embedding_model
+    if _embedding_model is None:
+        try:
+            from sentence_transformers import SentenceTransformer
+        except ImportError:
+            logger.error("sentence-transformers not installed.")
+            raise
+        logger.info("Loading BGE-M3 embedding model from local cache (one-time) …")
+        # Use GPU if available, otherwise fall back to CPU
+        import torch
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        if device == "cuda":
+            logger.info("CUDA available — using GPU for embeddings.")
+        else:
+            logger.info("CUDA not available — using CPU for embeddings.")
+        _embedding_model = SentenceTransformer("BAAI/bge-m3", device=device, local_files_only=True)
+        logger.info("BGE-M3 model loaded.")
+    return _embedding_model
+
 
 def _now():
     return datetime.now(timezone.utc).replace(tzinfo=None)
@@ -85,9 +112,8 @@ def sync_document(db: Session, doc: Document) -> bool:
 
     try:
         from pymilvus import Collection, connections
-        from sentence_transformers import SentenceTransformer
     except ImportError:
-        logger.error("pymilvus or sentence-transformers not installed.")
+        logger.error("pymilvus not installed.")
         raise
 
     # 1. Read the PDF
@@ -156,10 +182,11 @@ def sync_document(db: Session, doc: Document) -> bool:
         logger.warning("No chunks generated for document %s", doc.original_name)
         return True
 
-    # 4. Generate embeddings
-    model = SentenceTransformer("BAAI/bge-m3", device="cpu")
+    # 4. Generate embeddings (reuse global singleton model)
+    model = _get_embedding_model()
     texts = [c["text"] for c in chunks]
-    embeddings = model.encode(texts, normalize_embeddings=True)
+    # batch_size=256 reduces encode time on CPU (default 32 → ~8x fewer iterations)
+    embeddings = model.encode(texts, normalize_embeddings=True, batch_size=256)
     if hasattr(embeddings, "tolist"):
         embeddings = embeddings.tolist()
 
