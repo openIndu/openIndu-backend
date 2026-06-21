@@ -76,7 +76,7 @@ async def list_documents(brand: str | None = None, category: str | None = None, 
 
 
 @router.post("/upload")
-async def upload_document(background_tasks: BackgroundTasks, file: UploadFile = File(...), brand: str = Form(...), category: str = Form(...), description: str = Form(""), db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+async def upload_document(file: UploadFile = File(...), brand: str = Form(...), category: str = Form(...), description: str = Form(""), db: Session = Depends(get_db), admin: User = Depends(require_admin)):
     if brand not in BRANDS:
         raise HTTPException(400, "无效品牌")
     if category not in CATEGORIES:
@@ -91,8 +91,7 @@ async def upload_document(background_tasks: BackgroundTasks, file: UploadFile = 
     db.add(doc)
     db.commit()
     db.refresh(doc)
-    background_tasks.add_task(_sync_uploaded_document, doc.id)
-    return ok(doc.to_dict(), "上传成功，同步已自动启动")
+    return ok(doc.to_dict(), "上传成功")
 
 
 @router.get("/brands/list")
@@ -138,6 +137,20 @@ async def toggle_publish(doc_id: int, db: Session = Depends(get_db), admin: User
     db.commit()
     db.refresh(doc)
     return ok(doc.to_dict(), "发布状态已更新")
+
+
+@router.post("/{doc_id}/sync")
+async def sync_document_endpoint(doc_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    doc = db.query(Document).filter(Document.id == doc_id).first()
+    if not doc:
+        raise HTTPException(404, "文档不存在")
+    if doc.sync_status == "syncing":
+        raise HTTPException(409, "文档正在同步中，请稍后再试")
+    doc.sync_status = "syncing"
+    db.commit()
+    db.refresh(doc)
+    background_tasks.add_task(_sync_uploaded_document, doc_id)
+    return ok(doc.to_dict(), "同步已启动")
 
 
 @router.delete("/{doc_id}")
