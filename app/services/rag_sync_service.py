@@ -30,8 +30,15 @@ def _get_embedding_model():
         except ImportError:
             logger.error("sentence-transformers not installed.")
             raise
-        logger.info("Loading BGE-M3 embedding model (one-time) …")
-        _embedding_model = SentenceTransformer("BAAI/bge-m3", device="cpu")
+        logger.info("Loading BGE-M3 embedding model from local cache (one-time) …")
+        # Use GPU if available, otherwise fall back to CPU
+        import torch
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        if device == "cuda":
+            logger.info("CUDA available — using GPU for embeddings.")
+        else:
+            logger.info("CUDA not available — using CPU for embeddings.")
+        _embedding_model = SentenceTransformer("BAAI/bge-m3", device=device, local_files_only=True)
         logger.info("BGE-M3 model loaded.")
     return _embedding_model
 
@@ -178,7 +185,8 @@ def sync_document(db: Session, doc: Document) -> bool:
     # 4. Generate embeddings (reuse global singleton model)
     model = _get_embedding_model()
     texts = [c["text"] for c in chunks]
-    embeddings = model.encode(texts, normalize_embeddings=True)
+    # batch_size=256 reduces encode time on CPU (default 32 → ~8x fewer iterations)
+    embeddings = model.encode(texts, normalize_embeddings=True, batch_size=256)
     if hasattr(embeddings, "tolist"):
         embeddings = embeddings.tolist()
 

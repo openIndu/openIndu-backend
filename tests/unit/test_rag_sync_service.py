@@ -19,12 +19,15 @@ class TestEmbeddingModelSingleton:
         mod._embedding_model = None
 
         mock_model = MagicMock()
-        with patch("sentence_transformers.SentenceTransformer", return_value=mock_model) as mock_st:
+        with (
+            patch("sentence_transformers.SentenceTransformer", return_value=mock_model) as mock_st,
+            patch("torch.cuda.is_available", return_value=False),
+        ):
             model1 = mod._get_embedding_model()
             model2 = mod._get_embedding_model()
 
         # SentenceTransformer should be constructed only once
-        mock_st.assert_called_once_with("BAAI/bge-m3", device="cpu")
+        mock_st.assert_called_once_with("BAAI/bge-m3", device="cpu", local_files_only=True)
         # Both calls return the same instance
         assert model1 is model2
         assert model1 is mock_model
