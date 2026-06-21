@@ -185,8 +185,9 @@ def sync_document(db: Session, doc: Document) -> bool:
     # 4. Generate embeddings (reuse global singleton model)
     model = _get_embedding_model()
     texts = [c["text"] for c in chunks]
-    # batch_size=256 reduces encode time on CPU (default 32 → ~8x fewer iterations)
-    embeddings = model.encode(texts, normalize_embeddings=True, batch_size=256)
+    # batch_size=64 for 6GB GPU VRAM (RTX 3060); larger values may cause
+    # GPU memory swapping, making encoding extremely slow or stalled.
+    embeddings = model.encode(texts, normalize_embeddings=True, batch_size=64)
     if hasattr(embeddings, "tolist"):
         embeddings = embeddings.tolist()
 
