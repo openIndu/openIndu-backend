@@ -31,7 +31,7 @@ def _enrich_user_dict(db: Session, user_dict: dict, user_id: int) -> dict:
         LoginSession.user_id == user_id,
         LoginSession.is_active.is_(True),
     ).first()
-    user_dict["is_online"] = active_session is not None
+    user_dict["online"] = active_session is not None
 
     last_session = db.query(LoginSession).filter(
         LoginSession.user_id == user_id,
