@@ -2,14 +2,14 @@
 from datetime import datetime, timezone
 
 from fastapi import Request
-from jose import JWTError
+from jose import JWTError, jwt
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 
+from app.core.config import settings
 from app.core.database import SessionLocal
 from app.models.token_blacklist import TokenBlacklist
 from app.models.user import User
-from app.services.auth_service import decode_token
 
 
 class TokenBlacklistMiddleware(BaseHTTPMiddleware):
@@ -18,7 +18,7 @@ class TokenBlacklistMiddleware(BaseHTTPMiddleware):
         if auth.lower().startswith("bearer "):
             token = auth.split(" ", 1)[1]
             try:
-                payload = decode_token(token)
+                payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
                 jti = payload.get("jti")
                 db = SessionLocal()
                 try:

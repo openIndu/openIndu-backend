@@ -1,4 +1,5 @@
 """FastAPI Web REST application on port 8004."""
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -10,6 +11,7 @@ from slowapi.util import get_remote_address
 from starlette.responses import JSONResponse
 
 from app.api import admin, auth, brand_mapping, config, documents, files, portal, software, stats, sync, users, visits
+from app.core.config import settings
 from app.core.database import engine
 from app.middleware.online_stats import OnlineStatsMiddleware
 from app.middleware.token_blacklist import TokenBlacklistMiddleware
@@ -28,13 +30,45 @@ from app.models.user import User  # noqa: F401
 from app.models.visit_event import VisitEvent  # noqa: F401
 from app.tasks.sync_task import SyncScheduler
 
+logger = logging.getLogger(__name__)
 limiter = Limiter(key_func=get_remote_address, default_limits=["50/second"])
 scheduler = SyncScheduler()
+
+
+def _init_milvus_collection() -> None:
+    """Create the plc_knowledge Milvus collection if it does not exist."""
+    try:
+        from pymilvus import Collection, CollectionSchema, DataType, FieldSchema, connections, utility
+
+        connections.connect(alias="default", host=settings.MILVUS_HOST, port=settings.MILVUS_PORT, timeout=5)
+        if utility.has_collection(settings.MILVUS_COLLECTION):
+            logger.info("Milvus collection '%s' already exists", settings.MILVUS_COLLECTION)
+            return
+        fields = [
+            FieldSchema(name="id", dtype=DataType.INT64, is_primary=True, auto_id=True),
+            FieldSchema(name="text", dtype=DataType.VARCHAR, max_length=2048),
+            FieldSchema(name="document_name", dtype=DataType.VARCHAR, max_length=500),
+            FieldSchema(name="brand", dtype=DataType.VARCHAR, max_length=50),
+            FieldSchema(name="category", dtype=DataType.VARCHAR, max_length=50),
+            FieldSchema(name="page", dtype=DataType.INT32),
+            FieldSchema(name="chunk_id", dtype=DataType.INT32),
+            FieldSchema(name="embedding", dtype=DataType.FLOAT_VECTOR, dim=1024),
+        ]
+        schema = CollectionSchema(fields=fields, description="PLC knowledge base")
+        collection = Collection(name=settings.MILVUS_COLLECTION, schema=schema)
+        collection.create_index(
+            field_name="embedding",
+            index_params={"metric_type": "COSINE", "index_type": "IVF_FLAT", "params": {"nlist": 128}},
+        )
+        logger.info("Milvus collection '%s' created successfully", settings.MILVUS_COLLECTION)
+    except Exception as exc:
+        logger.warning("Milvus collection init skipped (will retry on first sync): %s", exc)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(engine)
+    _init_milvus_collection()
     scheduler.start()
     yield
     scheduler.stop()
