@@ -38,8 +38,10 @@ def _check_daily_limit(db: Session, user: User):
 
 
 @router.get("")
-async def list_software(brand: str | None = None, category: str | None = None, keyword: str | None = None, page: int = Query(1, ge=1), size: int = Query(20, ge=1, le=100), db: Session = Depends(get_db)):
+async def list_software(brand: str | None = None, category: str | None = None, keyword: str | None = None, published_only: bool = False, page: int = Query(1, ge=1), size: int = Query(20, ge=1, le=100), db: Session = Depends(get_db)):
     q = db.query(Software).filter(Software.is_active.is_(True))
+    if published_only:
+        q = q.filter(Software.is_published == True)  # noqa: E712
     if brand: q = q.filter(Software.brand == brand)
     if category: q = q.filter(Software.category == category)
     if keyword: q = q.filter(Software.original_name.ilike(f"%{keyword}%"))
@@ -124,6 +126,15 @@ async def delete_version(software_id: int, version_id: int, db: Session = Depend
     if not ver: raise HTTPException(404, "版本不存在")
     storage_service.delete_file(ver.oss_key); db.delete(ver); db.commit()
     return ok(message="删除成功")
+
+
+@router.patch("/{software_id}/publish")
+async def toggle_publish(software_id: int, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    sw = db.query(Software).filter(Software.id == software_id).first()
+    if not sw: raise HTTPException(404, "软件不存在")
+    sw.is_published = not sw.is_published
+    db.commit(); db.refresh(sw)
+    return ok(sw.to_dict(), "发布状态已更新")
 
 
 @router.delete("/{software_id}")
