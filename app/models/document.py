@@ -1,5 +1,5 @@
 """Document metadata model."""
-from sqlalchemy import BigInteger, Column, DateTime, Integer, String, Text, func
+from sqlalchemy import BigInteger, Boolean, Column, DateTime, Integer, String, Text, func
 
 from app.models import Base
 
@@ -18,6 +18,7 @@ class Document(Base):
     description = Column(Text, nullable=True)
     download_count = Column(Integer, nullable=False, default=0)
     sync_status = Column(String(20), nullable=False, default="pending")
+    is_published = Column(Boolean, nullable=False, default=False)
     upload_time = Column(DateTime, server_default=func.now(), nullable=False)
     sync_time = Column(DateTime, nullable=True)
 
@@ -34,6 +35,7 @@ class Document(Base):
             "description": self.description,
             "download_count": self.download_count,
             "sync_status": self.sync_status,
+            "is_published": self.is_published,
             "upload_time": self.upload_time.isoformat() if self.upload_time else None,
             "sync_time": self.sync_time.isoformat() if self.sync_time else None,
         }

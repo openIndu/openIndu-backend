@@ -60,8 +60,10 @@ def client_ip(request: Request) -> str | None:
 
 
 @router.get("")
-async def list_documents(brand: str | None = None, category: str | None = None, keyword: str | None = None, page: int = Query(1, ge=1), size: int = Query(20, ge=1, le=100), db: Session = Depends(get_db)):
+async def list_documents(brand: str | None = None, category: str | None = None, keyword: str | None = None, published_only: bool = False, page: int = Query(1, ge=1), size: int = Query(20, ge=1, le=100), db: Session = Depends(get_db)):
     q = db.query(Document)
+    if published_only:
+        q = q.filter(Document.is_published == True)  # noqa: E712
     if brand:
         q = q.filter(Document.brand == brand)
     if category:
@@ -125,6 +127,17 @@ async def get_document_download_link(doc_id: int, request: Request, db: Session 
     db.commit()
     signed_url = storage_service.get_download_url(doc.oss_key)
     return ok({"download_url": signed_url["url"], "expires_in": signed_url["expires_in"], "filename": doc.original_name})
+
+
+@router.patch("/{doc_id}/publish")
+async def toggle_publish(doc_id: int, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    doc = db.query(Document).filter(Document.id == doc_id).first()
+    if not doc:
+        raise HTTPException(404, "文档不存在")
+    doc.is_published = not doc.is_published
+    db.commit()
+    db.refresh(doc)
+    return ok(doc.to_dict(), "发布状态已更新")
 
 
 @router.delete("/{doc_id}")
