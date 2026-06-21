@@ -51,8 +51,8 @@ async def sync_status(db: Session = Depends(get_db), user: User = Depends(requir
     for (status,) in rows:
         key = status or "pending"
         stats[key] = stats.get(key, 0) + 1
-    pending_count = stats.get("pending", 0)
-    return ok({"documents": stats, "pending_count": pending_count, "status": "running" if pending_count else "idle"})
+    pending_count = stats.get("pending", 0) + stats.get("failed", 0)
+    return ok({"documents": stats, "pending_count": pending_count})
 
 
 @router.get("/logs")
