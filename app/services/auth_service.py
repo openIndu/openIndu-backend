@@ -1,8 +1,11 @@
 """SMS authentication and JWT lifecycle service."""
+import logging
 import random
 import re
 import uuid
 from datetime import datetime, timedelta, timezone
+
+logger = logging.getLogger(__name__)
 
 from fastapi import HTTPException, status
 from jose import jwt
@@ -88,7 +91,33 @@ class AuthService:
         code = settings.SMS_MOCK_CODE if settings.SMS_MOCK_ENABLED else f"{random.randint(0, 999999):06d}"
         db.add(SmsCode(phone=phone, code=code, expires_at=now + timedelta(minutes=5), last_sent_at=now))
         db.commit()
-        # Production SMS provider integration can be added here.
+        if not settings.SMS_MOCK_ENABLED:
+            self._send_sms(phone, code)
+
+    @staticmethod
+    def _send_sms(phone: str, code: str) -> None:
+        try:
+            from alibabacloud_dysmsapi20170525.client import Client
+            from alibabacloud_dysmsapi20170525.models import SendSmsRequest
+            from alibabacloud_tea_openapi.models import Config
+            cfg = Config(
+                access_key_id=settings.SMS_ACCESS_KEY,
+                access_key_secret=settings.SMS_ACCESS_KEY_SECRET,
+                endpoint="dysmsapi.aliyuncs.com",
+            )
+            client = Client(cfg)
+            req = SendSmsRequest(
+                phone_numbers=phone,
+                sign_name=settings.SMS_SIGN_NAME,
+                template_code=settings.SMS_TEMPLATE_ID,
+                template_param=f'{{"code":"{code}"}}',
+            )
+            resp = client.send_sms(req)
+            if resp.body.code != "OK":
+                raise RuntimeError(f"阿里云短信发送失败: {resp.body.message}")
+        except Exception as exc:
+            logger.error("SMS send failed to %s: %s", phone, exc)
+            raise HTTPException(status_code=502, detail=f"短信发送失败: {exc}")
 
     def verify_code(self, db: Session, phone: str, code: str) -> bool:
         self._validate_phone(phone)

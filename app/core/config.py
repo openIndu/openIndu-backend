@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
     SMS_ACCESS_KEY: str = ""
+    SMS_ACCESS_KEY_SECRET: str = ""
+    SMS_SIGN_NAME: str = ""
     SMS_TEMPLATE_ID: str = ""
     SMS_MOCK_ENABLED: bool = True
     SMS_MOCK_CODE: str = "888888"
