@@ -14,6 +14,7 @@ depends_on = None
 
 
 def upgrade() -> None:
+    op.execute("ALTER TABLE alembic_version ALTER COLUMN version_num TYPE VARCHAR(64)")
     op.add_column("documents", sa.Column("is_published", sa.Boolean(), nullable=False, server_default=sa.false()))
 
 
