@@ -1,7 +1,21 @@
 """Document metadata model."""
+from datetime import timezone, timedelta
+
 from sqlalchemy import BigInteger, Boolean, Column, DateTime, Integer, String, Text, func
 
 from app.models import Base
+
+# Shanghai timezone (UTC+8)
+TZ_SHANGHAI = timezone(timedelta(hours=8))
+
+
+def _to_shanghai_iso(dt):
+    """Convert a UTC-naive datetime to Shanghai timezone ISO string."""
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(TZ_SHANGHAI).isoformat()
 
 
 class Document(Base):
@@ -36,6 +50,6 @@ class Document(Base):
             "download_count": self.download_count,
             "sync_status": self.sync_status,
             "is_published": self.is_published,
-            "upload_time": self.upload_time.isoformat() if self.upload_time else None,
-            "sync_time": self.sync_time.isoformat() if self.sync_time else None,
+            "upload_time": _to_shanghai_iso(self.upload_time),
+            "sync_time": _to_shanghai_iso(self.sync_time),
         }
