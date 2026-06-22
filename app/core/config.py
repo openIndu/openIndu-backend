@@ -40,6 +40,11 @@ class Settings(BaseSettings):
     WEB_PORT: int = 8004
     MCP_PORT: int = 8005
 
+    # OSS path prefixes — override in .env to match your bucket layout
+    OSS_DOC_PREFIX: str = "documents"
+    OSS_SOFTWARE_PREFIX: str = "software"
+    OSS_LEGACY_DOC_PREFIX: str = "doc"
+
     DOWNLOAD_DAILY_LIMIT: int = 5
     PRESIGNED_URL_EXPIRE_MINUTES: int = 5
     DOCUMENT_MAX_SIZE_MB: int = 50

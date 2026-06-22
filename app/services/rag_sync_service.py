@@ -55,7 +55,7 @@ def scan_documents(db: Session) -> list[dict]:
     """
     # 1. Collect storage objects under documents/ prefix
     storage_objects: dict[str, dict] = {}
-    for obj in storage_service.list_objects("documents"):
+    for obj in storage_service.list_objects(settings.OSS_DOC_PREFIX):
         key = obj["key"]
         if not key.lower().endswith(".pdf"):
             continue

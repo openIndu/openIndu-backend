@@ -56,7 +56,7 @@ async def upload_software(file: UploadFile = File(...), brand: str = Form(...), 
     if not file.filename or _ext(file.filename) not in ALLOWED_EXTS: raise HTTPException(415, "不支持的软件包格式")
     content = await file.read()
     if len(content) > settings.SOFTWARE_MAX_SIZE_GB * 1024 * 1024 * 1024: raise HTTPException(413, "文件大小超过限制")
-    meta = storage_service.upload_file(content, file.filename, f"software/{brand}", file.content_type)
+    meta = storage_service.upload_file(content, file.filename, f"{settings.OSS_SOFTWARE_PREFIX}/{brand}", file.content_type)
     sw = Software(filename=meta["filename"], original_name=file.filename, brand=brand, category=category, latest_version=version, description=description)
     db.add(sw); db.flush()
     db.add(SoftwareVersion(software_id=sw.id, version=version, file_size=meta["file_size"], file_hash=meta["file_hash"], oss_key=meta["oss_key"]))
@@ -113,7 +113,7 @@ async def add_version(software_id: int, file: UploadFile = File(...), version: s
     sw = db.query(Software).filter(Software.id == software_id).first()
     if not sw: raise HTTPException(404, "软件不存在")
     if not file.filename or _ext(file.filename) not in ALLOWED_EXTS: raise HTTPException(415, "不支持的软件包格式")
-    content = await file.read(); meta = storage_service.upload_file(content, file.filename, f"software/{sw.brand}", file.content_type)
+    content = await file.read(); meta = storage_service.upload_file(content, file.filename, f"{settings.OSS_SOFTWARE_PREFIX}/{sw.brand}", file.content_type)
     ver = SoftwareVersion(software_id=sw.id, version=version, file_size=meta["file_size"], file_hash=meta["file_hash"], oss_key=meta["oss_key"])
     sw.latest_version = version
     db.add(ver); db.commit(); db.refresh(ver)

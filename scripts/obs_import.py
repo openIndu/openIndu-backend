@@ -20,6 +20,7 @@ import sys
 # Allow running from repo root or scripts/ directory
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from app.core.config import settings
 from app.core.database import SessionLocal
 from app.models.document import Document
 from app.services.oss_service import oss_service
@@ -88,7 +89,9 @@ CATEGORY_MAP: dict[str, str] = {
 }
 
 # 跳过整个目录
-SKIP_PREFIXES = {"doc/_index/"}
+def _skip_prefixes() -> set[str]:
+    base = settings.OSS_LEGACY_DOC_PREFIX.rstrip("/")
+    return {f"{base}/_index/"}
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -111,10 +114,7 @@ def classify(oss_key: str) -> tuple[str | None, str]:
 
 
 def should_skip(oss_key: str) -> bool:
-    for prefix in SKIP_PREFIXES:
-        if oss_key.startswith(prefix):
-            return True
-    return False
+    return any(oss_key.startswith(p) for p in _skip_prefixes())
 
 
 # ---------------------------------------------------------------------------
@@ -131,8 +131,9 @@ def import_documents(db, dry_run: bool) -> dict:
     }
     unsupported_brands: set[str] = set()
 
-    print("\n=== Scanning doc/ prefix ===")
-    objects = oss_service.list_objects("doc/")
+    prefix = settings.OSS_LEGACY_DOC_PREFIX.rstrip("/") + "/"
+    print(f"\n=== Scanning {prefix} prefix ===")
+    objects = oss_service.list_objects(prefix)
 
     for obj in objects:
         oss_key  = obj["key"]
