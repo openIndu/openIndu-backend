@@ -26,6 +26,7 @@ class Document(Base):
     original_name = Column(String(500), nullable=False)
     brand = Column(String(50), nullable=False, index=True)
     category = Column(String(50), nullable=False, index=True)
+    series = Column(String(100), nullable=True, index=True)
     file_size = Column(BigInteger, nullable=True)
     file_hash = Column(String(64), nullable=True, index=True)
     oss_key = Column(String(500), nullable=False, unique=True)
@@ -43,6 +44,7 @@ class Document(Base):
             "original_name": self.original_name,
             "brand": self.brand,
             "category": self.category,
+            "series": self.series,
             "file_size": self.file_size,
             "file_hash": self.file_hash,
             "oss_key": self.oss_key,
