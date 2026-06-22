@@ -64,7 +64,7 @@ def client_ip(request: Request) -> str | None:
 
 
 @router.get("")
-async def list_documents(brand: str | None = None, category: str | None = None, keyword: str | None = None, published_only: bool = False, page: int = Query(1, ge=1), size: int = Query(20, ge=1, le=100), db: Session = Depends(get_db)):
+async def list_documents(brand: str | None = None, category: str | None = None, series: str | None = None, keyword: str | None = None, published_only: bool = False, page: int = Query(1, ge=1), size: int = Query(20, ge=1, le=100), db: Session = Depends(get_db)):
     q = db.query(Document)
     if published_only:
         q = q.filter(Document.is_published == True)  # noqa: E712
@@ -72,6 +72,8 @@ async def list_documents(brand: str | None = None, category: str | None = None, 
         q = q.filter(Document.brand == brand)
     if category:
         q = q.filter(Document.category == category)
+    if series:
+        q = q.filter(Document.series == series)
     if keyword:
         q = q.filter(Document.original_name.ilike(f"%{keyword}%"))
     total = q.count()
@@ -80,7 +82,7 @@ async def list_documents(brand: str | None = None, category: str | None = None, 
 
 
 @router.post("/upload")
-async def upload_document(file: UploadFile = File(...), brand: str = Form(...), category: str = Form(...), description: str = Form(""), db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+async def upload_document(file: UploadFile = File(...), brand: str = Form(...), category: str = Form(...), series: str = Form(""), description: str = Form(""), db: Session = Depends(get_db), admin: User = Depends(require_admin)):
     brands = _valid_values(db, "brand")
     categories = _valid_values(db, "doc_category")
     if brand not in brands:
@@ -93,7 +95,7 @@ async def upload_document(file: UploadFile = File(...), brand: str = Form(...), 
     if len(content) > settings.DOCUMENT_MAX_SIZE_MB * 1024 * 1024:
         raise HTTPException(413, "文件大小超过限制")
     meta = storage_service.upload_file(content, file.filename, f"{settings.OSS_DOC_PREFIX}/{brand}", file.content_type or "application/pdf")
-    doc = Document(filename=meta["filename"], original_name=file.filename, brand=brand, category=category, file_size=meta["file_size"], file_hash=meta["file_hash"], oss_key=meta["oss_key"], description=description)
+    doc = Document(filename=meta["filename"], original_name=file.filename, brand=brand, category=category, series=series or None, file_size=meta["file_size"], file_hash=meta["file_hash"], oss_key=meta["oss_key"], description=description)
     db.add(doc)
     db.commit()
     db.refresh(doc)
@@ -140,6 +142,7 @@ class UpdateDocumentBody(BaseModel):
     original_name: str | None = None
     brand: str | None = None
     category: str | None = None
+    series: str | None = None
     description: str | None = None
 
 
@@ -156,6 +159,10 @@ async def update_document(doc_id: int, body: UpdateDocumentBody, db: Session = D
         if body.category not in _valid_values(db, "doc_category"):
             raise HTTPException(400, "无效分类")
         doc.category = body.category
+        if body.series is None:
+            doc.series = None
+    if body.series is not None:
+        doc.series = body.series or None
     if body.original_name is not None:
         if not body.original_name.strip():
             raise HTTPException(400, "文档名不能为空")

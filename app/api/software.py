@@ -42,19 +42,20 @@ def _check_daily_limit(db: Session, user: User):
 
 
 @router.get("")
-async def list_software(brand: str | None = None, category: str | None = None, keyword: str | None = None, published_only: bool = False, page: int = Query(1, ge=1), size: int = Query(20, ge=1, le=100), db: Session = Depends(get_db)):
+async def list_software(brand: str | None = None, category: str | None = None, series: str | None = None, keyword: str | None = None, published_only: bool = False, page: int = Query(1, ge=1), size: int = Query(20, ge=1, le=100), db: Session = Depends(get_db)):
     q = db.query(Software).filter(Software.is_active.is_(True))
     if published_only:
         q = q.filter(Software.is_published == True)  # noqa: E712
     if brand: q = q.filter(Software.brand == brand)
     if category: q = q.filter(Software.category == category)
+    if series: q = q.filter(Software.series == series)
     if keyword: q = q.filter(Software.original_name.ilike(f"%{keyword}%"))
     total = q.count(); items = [s.to_dict() for s in q.order_by(Software.created_at.desc()).offset((page - 1) * size).limit(size).all()]
     return ok({"items": items, "total": total, "page": page, "size": size})
 
 
 @router.post("/upload")
-async def upload_software(file: UploadFile = File(...), brand: str = Form(...), category: str = Form(...), version: str = Form(...), description: str = Form(""), db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+async def upload_software(file: UploadFile = File(...), brand: str = Form(...), category: str = Form(...), series: str = Form(""), version: str = Form(...), description: str = Form(""), db: Session = Depends(get_db), admin: User = Depends(require_admin)):
     brands = _valid_values(db, "brand")
     categories = _valid_values(db, "sw_category")
     if brand not in brands: raise HTTPException(400, "无效品牌")
@@ -63,7 +64,7 @@ async def upload_software(file: UploadFile = File(...), brand: str = Form(...), 
     content = await file.read()
     if len(content) > settings.SOFTWARE_MAX_SIZE_GB * 1024 * 1024 * 1024: raise HTTPException(413, "文件大小超过限制")
     meta = storage_service.upload_file(content, file.filename, f"{settings.OSS_SOFTWARE_PREFIX}/{brand}", file.content_type)
-    sw = Software(filename=meta["filename"], original_name=file.filename, brand=brand, category=category, latest_version=version, description=description)
+    sw = Software(filename=meta["filename"], original_name=file.filename, brand=brand, category=category, series=series or None, latest_version=version, description=description)
     db.add(sw); db.flush()
     db.add(SoftwareVersion(software_id=sw.id, version=version, file_size=meta["file_size"], file_hash=meta["file_hash"], oss_key=meta["oss_key"]))
     db.commit(); db.refresh(sw)
@@ -138,6 +139,7 @@ class UpdateSoftwareBody(BaseModel):
     original_name: str | None = None
     brand: str | None = None
     category: str | None = None
+    series: str | None = None
     description: str | None = None
 
 
@@ -153,6 +155,10 @@ async def update_software(software_id: int, body: UpdateSoftwareBody, db: Sessio
         if body.category not in _valid_values(db, "sw_category"):
             raise HTTPException(400, "无效分类")
         sw.category = body.category
+        if body.series is None:
+            sw.series = None
+    if body.series is not None:
+        sw.series = body.series or None
     if body.original_name is not None:
         if not body.original_name.strip():
             raise HTTPException(400, "软件名不能为空")

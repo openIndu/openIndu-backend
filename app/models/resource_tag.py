@@ -1,4 +1,4 @@
-"""ResourceTag model — stores dynamic brand / category metadata."""
+"""ResourceTag model — stores dynamic brand / category / series metadata."""
 from sqlalchemy import BigInteger, Boolean, Column, DateTime, Integer, String, func
 
 from app.models import Base
@@ -8,9 +8,10 @@ class ResourceTag(Base):
     __tablename__ = "resource_tags"
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
-    type = Column(String(20), nullable=False, index=True)   # brand | doc_category | sw_category
-    value = Column(String(100), nullable=False)              # slug used in DB (e.g. siemens)
-    label_zh = Column(String(200), nullable=False)           # Chinese display name
+    type = Column(String(20), nullable=False, index=True)    # brand | doc_category | sw_category | doc_series | sw_series
+    value = Column(String(100), nullable=False)               # slug used in DB (e.g. siemens, fx)
+    label_zh = Column(String(200), nullable=False)            # Chinese display name
+    parent_value = Column(String(100), nullable=True, index=True)  # parent category value for series
     is_active = Column(Boolean, nullable=False, default=True)
     sort_order = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
@@ -21,6 +22,7 @@ class ResourceTag(Base):
             "type": self.type,
             "value": self.value,
             "label_zh": self.label_zh,
+            "parent_value": self.parent_value,
             "is_active": self.is_active,
             "sort_order": self.sort_order,
             "created_at": self.created_at.isoformat() if self.created_at else None,
