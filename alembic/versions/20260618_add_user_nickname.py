@@ -15,7 +15,7 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column("users", sa.Column("nickname", sa.String(length=50), nullable=True))
+    op.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS nickname VARCHAR(50)")
 
 
 def downgrade() -> None:

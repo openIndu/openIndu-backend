@@ -14,7 +14,7 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column("software", sa.Column("is_published", sa.Boolean(), nullable=False, server_default=sa.false()))
+    op.execute("ALTER TABLE software ADD COLUMN IF NOT EXISTS is_published BOOLEAN NOT NULL DEFAULT false")
 
 
 def downgrade() -> None:
