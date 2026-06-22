@@ -10,7 +10,21 @@ from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
 from starlette.responses import JSONResponse
 
-from app.api import admin, auth, brand_mapping, config, documents, files, portal, software, stats, sync, tags, users, visits
+from app.api import (
+    admin,
+    auth,
+    brand_mapping,
+    config,
+    documents,
+    files,
+    portal,
+    software,
+    stats,
+    sync,
+    tags,
+    users,
+    visits,
+)
 from app.core.config import settings
 from app.core.database import engine
 from app.middleware.online_stats import OnlineStatsMiddleware
@@ -21,13 +35,13 @@ from app.models.document import Document  # noqa: F401
 from app.models.download_log import DownloadLog  # noqa: F401
 from app.models.login_session import LoginSession  # noqa: F401
 from app.models.portal_content import PortalContent  # noqa: F401
+from app.models.resource_tag import ResourceTag  # noqa: F401
 from app.models.sms_code import SmsCode  # noqa: F401
 from app.models.software import Software, SoftwareVersion  # noqa: F401
 from app.models.sync_log import SyncLog  # noqa: F401
 from app.models.system_config import SystemConfig  # noqa: F401
 from app.models.token_blacklist import TokenBlacklist  # noqa: F401
 from app.models.user import User  # noqa: F401
-from app.models.resource_tag import ResourceTag  # noqa: F401
 from app.models.visit_event import VisitEvent  # noqa: F401
 from app.tasks.sync_task import SyncScheduler
 
