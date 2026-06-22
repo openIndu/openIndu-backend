@@ -166,7 +166,7 @@ class BulkPublishDocumentsBody(BaseModel):
     category: str | None = None
     series: str | None = None
     keyword: str | None = None
-    published_only: bool = False
+    publish: bool = True
 
 
 @router.patch("/publish/bulk")
@@ -174,7 +174,7 @@ async def bulk_publish_documents(body: BulkPublishDocumentsBody, db: Session = D
     q = db.query(Document)
     if body.ids is not None:
         if not body.ids:
-            raise HTTPException(400, "请选择要发布的文档")
+            raise HTTPException(400, "请选择要操作的文档")
         q = q.filter(Document.id.in_(body.ids))
     else:
         if body.brand:
@@ -185,13 +185,12 @@ async def bulk_publish_documents(body: BulkPublishDocumentsBody, db: Session = D
             q = q.filter(Document.series == body.series)
         if body.keyword:
             q = q.filter(Document.original_name.ilike(f"%{body.keyword}%"))
-        if body.published_only:
-            q = q.filter(Document.is_published == True)  # noqa: E712
-    docs = q.filter(Document.is_published == False).all()  # noqa: E712
+    # Only flip documents whose current state differs from the target.
+    docs = q.filter(Document.is_published == (not body.publish)).all()
     for doc in docs:
-        doc.is_published = True
+        doc.is_published = body.publish
     db.commit()
-    return ok({"published_count": len(docs)}, "发布成功")
+    return ok({"count": len(docs), "publish": body.publish}, "发布成功" if body.publish else "取消发布成功")
 
 
 @router.patch("/{doc_id}")
