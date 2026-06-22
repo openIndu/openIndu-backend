@@ -62,7 +62,16 @@ async def sync_logs(
     db: Session = Depends(get_db),
     admin: User = Depends(require_admin),
 ):
-    q = db.query(SyncLog).order_by(SyncLog.sync_time.desc())
+    q = (
+        db.query(SyncLog, Document.original_name)
+        .outerjoin(Document, SyncLog.document_id == Document.id)
+        .order_by(SyncLog.sync_time.desc())
+    )
     total = q.count()
-    items = [x.to_dict() for x in q.offset((page - 1) * size).limit(size).all()]
+    rows = q.offset((page - 1) * size).limit(size).all()
+    items = []
+    for log, document_name in rows:
+        item = log.to_dict()
+        item["document_name"] = document_name
+        items.append(item)
     return ok({"items": items, "total": total, "page": page, "size": size})

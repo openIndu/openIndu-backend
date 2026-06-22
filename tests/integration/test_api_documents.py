@@ -247,9 +247,26 @@ class TestDocumentPublish:
         response = client.patch("/api/v1/documents/publish/bulk", json={"ids": [1, 2]})
 
         assert response.status_code == 200
-        assert response.json()["data"]["published_count"] == 2
+        assert response.json()["data"]["count"] == 2
+        assert response.json()["data"]["publish"] is True
         assert doc1.is_published is True
         assert doc2.is_published is True
+        client._mock_db.commit.assert_called_once()
+
+    def test_bulk_unpublish_selected_documents(self):
+        """Bulk unpublish (publish=false) should unpublish selected documents."""
+        admin = _make_user(role="admin")
+        client = _make_client(self.app, auth_user=admin)
+        doc1 = MagicMock()
+        doc1.is_published = True
+        client._mock_db.query.return_value = _query_chain(items=[doc1])
+
+        response = client.patch("/api/v1/documents/publish/bulk", json={"ids": [1], "publish": False})
+
+        assert response.status_code == 200
+        assert response.json()["data"]["count"] == 1
+        assert response.json()["data"]["publish"] is False
+        assert doc1.is_published is False
         client._mock_db.commit.assert_called_once()
 
     def test_bulk_publish_requires_selected_ids_when_ids_empty(self):
