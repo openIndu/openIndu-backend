@@ -23,7 +23,7 @@ class OSSService:
                 aws_access_key_id=settings.OSS_ACCESS_KEY_ID,
                 aws_secret_access_key=settings.OSS_ACCESS_KEY_SECRET,
                 region_name=settings.OSS_REGION,
-                config=Config(signature_version="s3v4"),
+                config=Config(signature_version="s3v4", s3={"addressing_style": "virtual"}),
             )
         return self._client
 
