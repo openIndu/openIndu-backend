@@ -72,6 +72,10 @@ def test_documents_list_upload_get(monkeypatch):
     assert result["data"]["total"] == 1
 
     db = MagicMock()
+    db.query.side_effect = [
+        _chain(items=[SimpleNamespace(value="siemens")]),
+        _chain(items=[SimpleNamespace(value="plc-manual")]),
+    ]
     monkeypatch.setattr(documents.storage_service, "upload_file", lambda c, n, p, t: {"oss_key": "docs/x.pdf", "filename": "x.pdf", "file_size": 100, "file_hash": "abc"})
     file = MagicMock()
     file.filename = "test.pdf"
@@ -79,7 +83,7 @@ def test_documents_list_upload_get(monkeypatch):
     async def read():
         return b"%PDF"
     file.read = read
-    result = asyncio.run(documents.upload_document(background_tasks=MagicMock(), file=file, brand="siemens", category="plc-manual", description="desc", db=db, admin=_user()))
+    result = asyncio.run(documents.upload_document(file=file, brand="siemens", category="plc-manual", series="", description="desc", db=db, admin=_user()))
     assert "上传成功" in result["message"]
 
     db = MagicMock()
@@ -91,8 +95,45 @@ def test_documents_list_upload_get(monkeypatch):
 def test_documents_brands_categories():
     from app.api import documents
 
-    assert asyncio.run(documents.brands())["data"] == ["siemens", "mitsubishi", "omron", "keyence", "inovance"]
-    assert asyncio.run(documents.categories())["data"]
+    db = MagicMock()
+    db.query.return_value = _chain(items=[SimpleNamespace(value="siemens"), SimpleNamespace(value="mitsubishi")])
+    assert asyncio.run(documents.brands(db))["data"] == ["siemens", "mitsubishi"]
+
+    db = MagicMock()
+    db.query.return_value = _chain(items=[SimpleNamespace(value="plc-manual"), SimpleNamespace(value="best-practice")])
+    assert asyncio.run(documents.categories(db))["data"] == ["plc-manual", "best-practice"]
+
+
+def test_document_series_validation():
+    from app.api import documents
+
+    db = MagicMock()
+    db.query.return_value = _chain(first=SimpleNamespace(value="s7-1200"))
+    documents._validate_doc_series(db, "siemens", "plc-manual", "s7-1200")
+
+    db = MagicMock()
+    db.query.return_value = _chain(first=None)
+    with pytest.raises(HTTPException) as exc:
+        documents._validate_doc_series(db, "siemens", "plc-manual", "bad-series")
+    assert exc.value.status_code == 400
+    assert exc.value.detail == "无效系列"
+
+
+def test_series_tags_require_brand_and_global_unique_value():
+    from app.api import tags
+
+    db = MagicMock()
+    body = tags.CreateTagBody(type="doc_series", value="s7-1200", label_zh="S7-1200", parent_value="plc-manual")
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(tags.create_tag(body, db, _user()))
+    assert exc.value.status_code == 400
+
+    db = MagicMock()
+    db.query.return_value = _chain(first=SimpleNamespace(value="s7-1200"))
+    body = tags.CreateTagBody(type="doc_series", value="s7-1200", label_zh="S7-1200", parent_value="hardware-manual", brand_value="siemens")
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(tags.create_tag(body, db, _user()))
+    assert exc.value.status_code == 409
 
 
 @pytest.mark.parametrize("filename,expected", [("setup.exe", ".exe"), ("archive", "")])
