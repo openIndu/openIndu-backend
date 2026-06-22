@@ -24,6 +24,7 @@ class CreateTagBody(BaseModel):
     value: str
     label_zh: str
     parent_value: str | None = None
+    brand_value: str | None = None
     sort_order: int = 0
 
 
@@ -34,7 +35,7 @@ class UpdateTagBody(BaseModel):
 
 
 @router.get("")
-async def list_tags(type: str | None = None, parent: str | None = None, db: Session = Depends(get_db)):
+async def list_tags(type: str | None = None, parent: str | None = None, brand: str | None = None, db: Session = Depends(get_db)):
     q = db.query(ResourceTag)
     if type:
         if type not in VALID_TYPES:
@@ -42,6 +43,8 @@ async def list_tags(type: str | None = None, parent: str | None = None, db: Sess
         q = q.filter(ResourceTag.type == type)
     if parent is not None:
         q = q.filter(ResourceTag.parent_value == parent)
+    if brand is not None:
+        q = q.filter(ResourceTag.brand_value == brand)
     tags = q.order_by(ResourceTag.type, ResourceTag.sort_order, ResourceTag.id).all()
     return ok([t.to_dict() for t in tags])
 
@@ -66,6 +69,7 @@ async def create_tag(body: CreateTagBody, db: Session = Depends(get_db), _: User
         value=body.value.strip(),
         label_zh=body.label_zh.strip(),
         parent_value=body.parent_value or None,
+        brand_value=body.brand_value or None,
         sort_order=body.sort_order,
     )
     db.add(tag)
