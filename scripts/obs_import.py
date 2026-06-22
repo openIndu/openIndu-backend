@@ -100,13 +100,15 @@ def _skip_prefixes() -> set[str]:
 def classify(oss_key: str) -> tuple[str | None, str]:
     """Return (brand_id, category_id) from the OBS path.
 
-    Path format: doc/{brand_folder}/{category_folder}/{filename}
+    Path format: {prefix}/{brand_folder}/{category_folder}/{filename}
+    Prefix depth is derived from OSS_LEGACY_DOC_PREFIX so deep paths
+    like "docs/demo/brand/category/file.pdf" are handled correctly.
     Returns (None, category) when brand is unsupported — caller should skip.
     """
+    prefix_depth = len([s for s in settings.OSS_LEGACY_DOC_PREFIX.strip("/").split("/") if s])
     parts = oss_key.split("/")
-    # parts[0] = "doc", parts[1] = brand_folder, parts[2] = category_folder
-    brand_folder    = parts[1] if len(parts) > 1 else ""
-    category_folder = parts[2] if len(parts) > 2 else ""
+    brand_folder    = parts[prefix_depth]     if len(parts) > prefix_depth     else ""
+    category_folder = parts[prefix_depth + 1] if len(parts) > prefix_depth + 1 else ""
 
     brand    = BRAND_MAP.get(brand_folder)
     category = CATEGORY_MAP.get(category_folder, "other")
