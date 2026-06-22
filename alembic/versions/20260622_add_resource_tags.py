@@ -57,8 +57,8 @@ def upgrade() -> None:
     for tag_type, value, label_zh, sort_order in _SEED:
         op.execute(
             sa.text(
-                "INSERT INTO resource_tags (type, value, label_zh, sort_order) "
-                "VALUES (:t, :v, :l, :s) ON CONFLICT (type, value) DO NOTHING"
+                "INSERT INTO resource_tags (type, value, label_zh, is_active, sort_order) "
+                "VALUES (:t, :v, :l, true, :s) ON CONFLICT (type, value) DO NOTHING"
             ).bindparams(t=tag_type, v=value, l=label_zh, s=sort_order)
         )
 
