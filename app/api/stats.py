@@ -6,6 +6,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_db, require_admin
+from app.core.utils import mask_phone
 from app.models.document import Document
 from app.models.login_session import LoginSession
 from app.models.software import Software
@@ -293,7 +294,7 @@ async def login_history(
     rows = q.offset((page - 1) * size).limit(size).all()
     items = [{
         "id": session.id,
-        "username": phone or f"ID:{session.user_id}",
+        "username": mask_phone(phone) or f"ID:{session.user_id}",
         "ip": session.ip_address,
         "location": session.geo_location or "未知",
         "login_time": session.last_active_at.isoformat() if session.last_active_at else None,

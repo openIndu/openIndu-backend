@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_db, require_admin
+from app.core.utils import mask_phone
 from app.models.admin_audit_log import AdminAuditLog
 from app.models.user import User
 
@@ -45,8 +46,8 @@ async def audit_logs(
 
     items = [{
         "id": log.id,
-        "admin_username": admin_phone or f"ID:{log.admin_id}",
-        "target_user": target_phone or (f"ID:{log.target_user_id}" if log.target_user_id else "-"),
+        "admin_username": mask_phone(admin_phone) or f"ID:{log.admin_id}",
+        "target_user": mask_phone(target_phone) or (f"ID:{log.target_user_id}" if log.target_user_id else "-"),
         "action": log.action,
         "detail": str(log.detail) if log.detail else "-",
         "created_at": log.created_at.isoformat() if log.created_at else None,
