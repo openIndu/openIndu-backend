@@ -11,7 +11,7 @@ from app.models.user import User
 
 router = APIRouter(prefix="/tags")
 
-VALID_TYPES = {"brand", "doc_category", "sw_category", "doc_series", "sw_series"}
+VALID_TYPES = {"doc_brand", "sw_brand", "doc_category", "sw_category", "doc_series", "sw_series"}
 SERIES_TYPES = {"doc_series", "sw_series"}
 
 
@@ -101,11 +101,10 @@ async def delete_tag(tag_id: int, db: Session = Depends(get_db), _: User = Depen
     tag = db.query(ResourceTag).filter(ResourceTag.id == tag_id).first()
     if not tag:
         raise HTTPException(404, "标签不存在")
-    if tag.type == "brand":
-        in_use = (
-            db.query(Document).filter(Document.brand == tag.value).first()
-            or db.query(Software).filter(Software.brand == tag.value).first()
-        )
+    if tag.type == "doc_brand":
+        in_use = db.query(Document).filter(Document.brand == tag.value).first()
+    elif tag.type == "sw_brand":
+        in_use = db.query(Software).filter(Software.brand == tag.value).first()
     elif tag.type == "doc_category":
         in_use = db.query(Document).filter(Document.category == tag.value).first()
         if not in_use:
