@@ -28,6 +28,20 @@ def _valid_values(db: Session, tag_type: str) -> list[str]:
     return [t.value for t in db.query(ResourceTag).filter(ResourceTag.type == tag_type, ResourceTag.is_active == True).all()]  # noqa: E712
 
 
+def _validate_doc_series(db: Session, brand: str, category: str, series: str | None) -> None:
+    if not series:
+        return
+    exists = db.query(ResourceTag).filter(
+        ResourceTag.type == "doc_series",
+        ResourceTag.value == series,
+        ResourceTag.brand_value == brand,
+        ResourceTag.parent_value == category,
+        ResourceTag.is_active == True,  # noqa: E712
+    ).first()
+    if not exists:
+        raise HTTPException(400, "无效系列")
+
+
 def _sync_uploaded_document(doc_id: int):
     db = None
     try:
@@ -89,6 +103,7 @@ async def upload_document(file: UploadFile = File(...), brand: str = Form(...), 
         raise HTTPException(400, "无效品牌")
     if category not in categories:
         raise HTTPException(400, "无效分类")
+    _validate_doc_series(db, brand, category, series or None)
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(415, "仅支持 PDF 文件")
     content = await file.read()
@@ -154,6 +169,8 @@ async def update_document(doc_id: int, body: UpdateDocumentBody, db: Session = D
         if body.brand not in _valid_values(db, "doc_brand"):
             raise HTTPException(400, "无效品牌")
         doc.brand = body.brand
+        if body.series is None:
+            doc.series = None
     if body.category is not None:
         if body.category not in _valid_values(db, "doc_category"):
             raise HTTPException(400, "无效分类")
@@ -161,6 +178,7 @@ async def update_document(doc_id: int, body: UpdateDocumentBody, db: Session = D
         if body.series is None:
             doc.series = None
     if body.series is not None:
+        _validate_doc_series(db, doc.brand, doc.category, body.series or None)
         doc.series = body.series or None
     if body.original_name is not None:
         if not body.original_name.strip():

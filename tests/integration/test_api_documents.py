@@ -9,6 +9,24 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 
+def _query_chain(items=None, first=None, count=0):
+    q = MagicMock()
+    q.filter.return_value = q
+    q.order_by.return_value = q
+    q.offset.return_value = q
+    q.limit.return_value = q
+    q.all.return_value = items or []
+    q.first.return_value = first
+    q.count.return_value = count
+    return q
+
+
+def _tag(value):
+    tag = MagicMock()
+    tag.value = value
+    return tag
+
+
 def _make_user(id=1, phone="13800138000", role="user"):
     user = MagicMock()
     user.id = id
@@ -32,7 +50,7 @@ def _make_client(app, auth_user=None):
     app.dependency_overrides.clear()
 
     mock_db = MagicMock()
-    mock_db.query.return_value = MagicMock()
+    mock_db.query.return_value = _query_chain()
     mock_db.add = MagicMock()
     mock_db.commit = MagicMock()
     mock_db.refresh = MagicMock()
@@ -105,6 +123,10 @@ class TestDocumentUpload:
 
         admin = _make_user(role="admin")
         client = _make_client(self.app, auth_user=admin)
+        client._mock_db.query.side_effect = [
+            _query_chain(items=[_tag("siemens")]),
+            _query_chain(items=[_tag("plc-manual")]),
+        ]
 
         mock_meta = {
             "oss_key": "documents/siemens/abc123.pdf",
@@ -135,6 +157,10 @@ class TestDocumentUpload:
         """Uploading a non-PDF file should fail."""
         admin = _make_user(role="admin")
         client = _make_client(self.app, auth_user=admin)
+        client._mock_db.query.side_effect = [
+            _query_chain(items=[_tag("siemens")]),
+            _query_chain(items=[_tag("plc-manual")]),
+        ]
 
         response = client.post(
             "/api/v1/documents/upload",
@@ -180,6 +206,7 @@ class TestBrandsAndCategories:
         """Brands list should return the predefined brands."""
         user = _make_user()
         client = _make_client(self.app, auth_user=user)
+        client._mock_db.query.return_value = _query_chain(items=[_tag("siemens"), _tag("mitsubishi")])
 
         response = client.get("/api/v1/documents/brands/list")
         assert response.status_code == 200
@@ -191,6 +218,7 @@ class TestBrandsAndCategories:
         """Categories list should return the predefined categories."""
         user = _make_user()
         client = _make_client(self.app, auth_user=user)
+        client._mock_db.query.return_value = _query_chain(items=[_tag("plc-manual"), _tag("best-practice")])
 
         response = client.get("/api/v1/documents/categories/list")
         assert response.status_code == 200

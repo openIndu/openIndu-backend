@@ -5,8 +5,6 @@ import re
 import uuid
 from datetime import datetime, timedelta, timezone
 
-logger = logging.getLogger(__name__)
-
 from fastapi import HTTPException, status
 from jose import jwt
 from sqlalchemy import func
@@ -18,6 +16,7 @@ from app.models.sms_code import SmsCode
 from app.models.token_blacklist import TokenBlacklist
 from app.models.user import User
 
+logger = logging.getLogger(__name__)
 PHONE_RE = re.compile(r"^1\d{10}$")
 
 

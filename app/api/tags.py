@@ -55,13 +55,13 @@ async def create_tag(body: CreateTagBody, db: Session = Depends(get_db), _: User
         raise HTTPException(400, f"无效 type，可选：{', '.join(sorted(VALID_TYPES))}")
     if not body.value.strip() or not body.label_zh.strip():
         raise HTTPException(400, "value 和 label_zh 不能为空")
-    if body.type in SERIES_TYPES and not body.parent_value:
-        raise HTTPException(400, "series 类型必须提供 parent_value")
-    existing = db.query(ResourceTag).filter(
-        ResourceTag.type == body.type,
-        ResourceTag.value == body.value.strip(),
-        ResourceTag.parent_value == (body.parent_value or None),
-    ).first()
+    if body.type in SERIES_TYPES and (not body.parent_value or not body.brand_value):
+        raise HTTPException(400, "series 类型必须提供 parent_value 和 brand_value")
+    value = body.value.strip()
+    existing_query = db.query(ResourceTag).filter(ResourceTag.type == body.type, ResourceTag.value == value)
+    if body.type not in SERIES_TYPES:
+        existing_query = existing_query.filter(ResourceTag.parent_value == (body.parent_value or None))
+    existing = existing_query.first()
     if existing:
         raise HTTPException(409, f"标签已存在：type={body.type}, value={body.value}")
     tag = ResourceTag(

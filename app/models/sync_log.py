@@ -1,5 +1,5 @@
 """OSS to RAG synchronization log model."""
-from datetime import timezone, timedelta
+from datetime import timedelta, timezone
 
 from sqlalchemy import BigInteger, Column, DateTime, String, Text, func
 
