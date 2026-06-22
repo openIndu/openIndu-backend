@@ -39,34 +39,31 @@ _SEED = [
 
 
 def upgrade() -> None:
-    op.create_table(
-        "resource_tags",
-        sa.Column("id", sa.BigInteger(), autoincrement=True, nullable=False),
-        sa.Column("type", sa.String(length=20), nullable=False),
-        sa.Column("value", sa.String(length=100), nullable=False),
-        sa.Column("label_zh", sa.String(length=200), nullable=False),
-        sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.true()),
-        sa.Column("sort_order", sa.Integer(), nullable=False, server_default="0"),
-        sa.Column("created_at", sa.DateTime(), server_default=sa.text("(CURRENT_TIMESTAMP)"), nullable=False),
-        sa.PrimaryKeyConstraint("id"),
-    )
-    op.create_index("ix_resource_tags_type", "resource_tags", ["type"])
-    op.create_index("ix_resource_tags_type_value", "resource_tags", ["type", "value"], unique=True)
+    op.execute("""
+        CREATE TABLE IF NOT EXISTS resource_tags (
+            id BIGSERIAL NOT NULL,
+            type VARCHAR(20) NOT NULL,
+            value VARCHAR(100) NOT NULL,
+            label_zh VARCHAR(200) NOT NULL,
+            is_active BOOLEAN NOT NULL DEFAULT true,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (id)
+        )
+    """)
+    op.execute("CREATE INDEX IF NOT EXISTS ix_resource_tags_type ON resource_tags (type)")
+    op.execute("CREATE UNIQUE INDEX IF NOT EXISTS ix_resource_tags_type_value ON resource_tags (type, value)")
 
-    resource_tags = sa.table(
-        "resource_tags",
-        sa.column("type", sa.String),
-        sa.column("value", sa.String),
-        sa.column("label_zh", sa.String),
-        sa.column("sort_order", sa.Integer),
-    )
-    op.bulk_insert(resource_tags, [
-        {"type": t, "value": v, "label_zh": l, "sort_order": s}
-        for t, v, l, s in _SEED
-    ])
+    for tag_type, value, label_zh, sort_order in _SEED:
+        op.execute(
+            sa.text(
+                "INSERT INTO resource_tags (type, value, label_zh, sort_order) "
+                "VALUES (:t, :v, :l, :s) ON CONFLICT (type, value) DO NOTHING"
+            ).bindparams(t=tag_type, v=value, l=label_zh, s=sort_order)
+        )
 
 
 def downgrade() -> None:
-    op.drop_index("ix_resource_tags_type_value", table_name="resource_tags")
-    op.drop_index("ix_resource_tags_type", table_name="resource_tags")
+    op.execute("DROP INDEX IF EXISTS ix_resource_tags_type_value")
+    op.execute("DROP INDEX IF EXISTS ix_resource_tags_type")
     op.drop_table("resource_tags")
