@@ -2,18 +2,18 @@
 from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.dependencies import get_db, require_admin, require_member
 from app.models.download_log import DownloadLog
+from app.models.resource_tag import ResourceTag
 from app.models.software import Software, SoftwareVersion
 from app.models.user import User
 from app.services.storage_service import storage_service
 
 router = APIRouter(prefix="/software")
-BRANDS = ["siemens", "mitsubishi", "omron", "keyence", "inovance"]
-CATEGORIES = ["plc-ide", "hmi-ide", "plc-driver", "utility", "firmware", "other"]
 ALLOWED_EXTS = {".zip", ".exe", ".msi", ".rar", ".7z"}
 
 
@@ -28,6 +28,10 @@ def _ext(filename: str) -> str:
 def _ip(request: Request):
     forwarded = request.headers.get("x-forwarded-for")
     return forwarded.split(",")[0].strip() if forwarded else (request.client.host if request.client else None)
+
+
+def _valid_values(db: Session, tag_type: str) -> list[str]:
+    return [t.value for t in db.query(ResourceTag).filter(ResourceTag.type == tag_type, ResourceTag.is_active == True).all()]  # noqa: E712
 
 
 def _check_daily_limit(db: Session, user: User):
@@ -51,8 +55,10 @@ async def list_software(brand: str | None = None, category: str | None = None, k
 
 @router.post("/upload")
 async def upload_software(file: UploadFile = File(...), brand: str = Form(...), category: str = Form(...), version: str = Form(...), description: str = Form(""), db: Session = Depends(get_db), admin: User = Depends(require_admin)):
-    if brand not in BRANDS: raise HTTPException(400, "无效品牌")
-    if category not in CATEGORIES: raise HTTPException(400, "无效分类")
+    brands = _valid_values(db, "brand")
+    categories = _valid_values(db, "sw_category")
+    if brand not in brands: raise HTTPException(400, "无效品牌")
+    if category not in categories: raise HTTPException(400, "无效分类")
     if not file.filename or _ext(file.filename) not in ALLOWED_EXTS: raise HTTPException(415, "不支持的软件包格式")
     content = await file.read()
     if len(content) > settings.SOFTWARE_MAX_SIZE_GB * 1024 * 1024 * 1024: raise HTTPException(413, "文件大小超过限制")
@@ -65,13 +71,13 @@ async def upload_software(file: UploadFile = File(...), brand: str = Form(...), 
 
 
 @router.get("/brands/list")
-async def brands():
-    return ok(BRANDS)
+async def brands(db: Session = Depends(get_db)):
+    return ok(_valid_values(db, "brand"))
 
 
 @router.get("/categories/list")
-async def categories():
-    return ok(CATEGORIES)
+async def categories(db: Session = Depends(get_db)):
+    return ok(_valid_values(db, "sw_category"))
 
 
 @router.get("/{software_id}")
@@ -126,6 +132,35 @@ async def delete_version(software_id: int, version_id: int, db: Session = Depend
     if not ver: raise HTTPException(404, "版本不存在")
     storage_service.delete_file(ver.oss_key); db.delete(ver); db.commit()
     return ok(message="删除成功")
+
+
+class UpdateSoftwareBody(BaseModel):
+    original_name: str | None = None
+    brand: str | None = None
+    category: str | None = None
+    description: str | None = None
+
+
+@router.patch("/{software_id}")
+async def update_software(software_id: int, body: UpdateSoftwareBody, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    sw = db.query(Software).filter(Software.id == software_id).first()
+    if not sw: raise HTTPException(404, "软件不存在")
+    if body.brand is not None:
+        if body.brand not in _valid_values(db, "brand"):
+            raise HTTPException(400, "无效品牌")
+        sw.brand = body.brand
+    if body.category is not None:
+        if body.category not in _valid_values(db, "sw_category"):
+            raise HTTPException(400, "无效分类")
+        sw.category = body.category
+    if body.original_name is not None:
+        if not body.original_name.strip():
+            raise HTTPException(400, "软件名不能为空")
+        sw.original_name = body.original_name.strip()
+    if body.description is not None:
+        sw.description = body.description
+    db.commit(); db.refresh(sw)
+    return ok(sw.to_dict(), "更新成功")
 
 
 @router.patch("/{software_id}/publish")
