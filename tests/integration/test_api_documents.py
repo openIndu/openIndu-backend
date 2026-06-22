@@ -42,9 +42,8 @@ def _make_client(app, auth_user=None):
 
     Clears any existing overrides on the app first to ensure test isolation.
     """
+    from app.core.dependencies import get_db, require_admin, require_auth, require_member
     from fastapi.testclient import TestClient
-
-    from app.core.dependencies import get_db, require_auth, require_admin, require_member
 
     # Clear previous overrides for test isolation
     app.dependency_overrides.clear()
@@ -225,6 +224,42 @@ class TestBrandsAndCategories:
         categories = response.json()["data"]
         assert "plc-manual" in categories
         assert "best-practice" in categories
+
+
+class TestDocumentPublish:
+    """Test document publish endpoints."""
+
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        from app.web_app import app
+        self.app = app
+
+    def test_bulk_publish_selected_documents(self):
+        """Bulk publish should publish selected unpublished documents."""
+        admin = _make_user(role="admin")
+        client = _make_client(self.app, auth_user=admin)
+        doc1 = MagicMock()
+        doc1.is_published = False
+        doc2 = MagicMock()
+        doc2.is_published = False
+        client._mock_db.query.return_value = _query_chain(items=[doc1, doc2])
+
+        response = client.patch("/api/v1/documents/publish/bulk", json={"ids": [1, 2]})
+
+        assert response.status_code == 200
+        assert response.json()["data"]["published_count"] == 2
+        assert doc1.is_published is True
+        assert doc2.is_published is True
+        client._mock_db.commit.assert_called_once()
+
+    def test_bulk_publish_requires_selected_ids_when_ids_empty(self):
+        """Empty ids should fail to avoid accidental no-op confusion."""
+        admin = _make_user(role="admin")
+        client = _make_client(self.app, auth_user=admin)
+
+        response = client.patch("/api/v1/documents/publish/bulk", json={"ids": []})
+
+        assert response.status_code == 400
 
 
 class TestDocumentDetail:

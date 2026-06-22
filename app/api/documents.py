@@ -160,6 +160,40 @@ class UpdateDocumentBody(BaseModel):
     description: str | None = None
 
 
+class BulkPublishDocumentsBody(BaseModel):
+    ids: list[int] | None = None
+    brand: str | None = None
+    category: str | None = None
+    series: str | None = None
+    keyword: str | None = None
+    published_only: bool = False
+
+
+@router.patch("/publish/bulk")
+async def bulk_publish_documents(body: BulkPublishDocumentsBody, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    q = db.query(Document)
+    if body.ids is not None:
+        if not body.ids:
+            raise HTTPException(400, "请选择要发布的文档")
+        q = q.filter(Document.id.in_(body.ids))
+    else:
+        if body.brand:
+            q = q.filter(Document.brand == body.brand)
+        if body.category:
+            q = q.filter(Document.category == body.category)
+        if body.series:
+            q = q.filter(Document.series == body.series)
+        if body.keyword:
+            q = q.filter(Document.original_name.ilike(f"%{body.keyword}%"))
+        if body.published_only:
+            q = q.filter(Document.is_published == True)  # noqa: E712
+    docs = q.filter(Document.is_published == False).all()  # noqa: E712
+    for doc in docs:
+        doc.is_published = True
+    db.commit()
+    return ok({"published_count": len(docs)}, "发布成功")
+
+
 @router.patch("/{doc_id}")
 async def update_document(doc_id: int, body: UpdateDocumentBody, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
     doc = db.query(Document).filter(Document.id == doc_id).first()
