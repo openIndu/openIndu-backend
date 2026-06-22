@@ -12,6 +12,7 @@ class ResourceTag(Base):
     value = Column(String(100), nullable=False)               # slug used in DB (e.g. siemens, fx)
     label_zh = Column(String(200), nullable=False)            # Chinese display name
     parent_value = Column(String(100), nullable=True, index=True)  # parent category value for series
+    brand_value = Column(String(100), nullable=True, index=True)   # brand slug for series (e.g. siemens)
     is_active = Column(Boolean, nullable=False, default=True)
     sort_order = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
@@ -23,6 +24,7 @@ class ResourceTag(Base):
             "value": self.value,
             "label_zh": self.label_zh,
             "parent_value": self.parent_value,
+            "brand_value": self.brand_value,
             "is_active": self.is_active,
             "sort_order": self.sort_order,
             "created_at": self.created_at.isoformat() if self.created_at else None,
