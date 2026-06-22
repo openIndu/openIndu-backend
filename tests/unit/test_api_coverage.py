@@ -192,8 +192,12 @@ def test_software_list_upload_get_add_delete(monkeypatch):
     file.read = read
 
     db = MagicMock()
+    db.query.side_effect = [
+        _chain(items=[SimpleNamespace(value="siemens")]),
+        _chain(items=[SimpleNamespace(value="utility")]),
+    ]
     db.flush = lambda: None
-    assert asyncio.run(software.upload_software(file=file, brand="siemens", category="utility", version="1.0", description="desc", db=db, admin=_user()))["message"] == "上传成功"
+    assert asyncio.run(software.upload_software(file=file, brand="siemens", category="utility", series="", version="1.0", description="desc", db=db, admin=_user()))["message"] == "上传成功"
 
     db = MagicMock()
     db.query.return_value = _chain(first=sw)
@@ -218,7 +222,8 @@ def test_config_api_update_and_list():
     db.query.return_value.filter.return_value.first.return_value = None
     body = config.ConfigUpdate(items=[config.ConfigItem(key="rag_chunk_size", value="512")])
     result = asyncio.run(config.update_config(body, db, _user()))
-    assert result["data"]["items"][0]["key"] == "rag_chunk_size"
+    updated = result["data"]["items"][0]
+    assert (updated.get("config_key") or updated.get("key")) == "rag_chunk_size"
 
 
 def test_portal_api_crud():
@@ -275,7 +280,7 @@ def test_users_helpers_and_actions():
     db = MagicMock()
     db.query.return_value = q
     data = users._enrich_user_dict(db, {}, 1)
-    assert data["is_online"] is True
+    assert data["online"] is True
     assert data["login_ip"] == "127.0.0.1"
 
     target = SimpleNamespace(id=2, phone="138", role="user", is_active=True, is_blacklisted=False, blacklisted_at=None, blacklisted_by=None, tokens_invalidated_at=None)

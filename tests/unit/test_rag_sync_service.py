@@ -1,4 +1,6 @@
 """Unit tests for rag_sync_service — embedding model singleton."""
+import sys
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -19,12 +21,12 @@ class TestEmbeddingModelSingleton:
         mod._embedding_model = None
 
         mock_model = MagicMock()
-        with (
-            patch("sentence_transformers.SentenceTransformer", return_value=mock_model) as mock_st,
-            patch("torch.cuda.is_available", return_value=False),
-        ):
+        sentence_transformers = SimpleNamespace(SentenceTransformer=MagicMock(return_value=mock_model))
+        torch = SimpleNamespace(cuda=SimpleNamespace(is_available=MagicMock(return_value=False)))
+        with patch.dict(sys.modules, {"sentence_transformers": sentence_transformers, "torch": torch}):
             model1 = mod._get_embedding_model()
             model2 = mod._get_embedding_model()
+        mock_st = sentence_transformers.SentenceTransformer
 
         # SentenceTransformer should be constructed only once
         mock_st.assert_called_once_with("BAAI/bge-m3", device="cpu", local_files_only=True)
@@ -37,6 +39,8 @@ class TestEmbeddingModelSingleton:
         import app.services.rag_sync_service as mod
         mod._embedding_model = None
 
-        with patch("sentence_transformers.SentenceTransformer", side_effect=ImportError("no module")):
+        sentence_transformers = SimpleNamespace(SentenceTransformer=MagicMock(side_effect=ImportError("no module")))
+        torch = SimpleNamespace(cuda=SimpleNamespace(is_available=MagicMock(return_value=False)))
+        with patch.dict(sys.modules, {"sentence_transformers": sentence_transformers, "torch": torch}):
             with pytest.raises(ImportError, match="no module"):
                 mod._get_embedding_model()
