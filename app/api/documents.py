@@ -83,7 +83,7 @@ async def list_documents(brand: str | None = None, category: str | None = None, 
 
 @router.post("/upload")
 async def upload_document(file: UploadFile = File(...), brand: str = Form(...), category: str = Form(...), series: str = Form(""), description: str = Form(""), db: Session = Depends(get_db), admin: User = Depends(require_admin)):
-    brands = _valid_values(db, "brand")
+    brands = _valid_values(db, "doc_brand")
     categories = _valid_values(db, "doc_category")
     if brand not in brands:
         raise HTTPException(400, "无效品牌")
@@ -104,8 +104,7 @@ async def upload_document(file: UploadFile = File(...), brand: str = Form(...), 
 
 @router.get("/brands/list")
 async def brands(db: Session = Depends(get_db)):
-    values = _valid_values(db, "brand")
-    return ok(values)
+    return ok(_valid_values(db, "doc_brand"))
 
 
 @router.get("/categories/list")
@@ -152,7 +151,7 @@ async def update_document(doc_id: int, body: UpdateDocumentBody, db: Session = D
     if not doc:
         raise HTTPException(404, "文档不存在")
     if body.brand is not None:
-        if body.brand not in _valid_values(db, "brand"):
+        if body.brand not in _valid_values(db, "doc_brand"):
             raise HTTPException(400, "无效品牌")
         doc.brand = body.brand
     if body.category is not None:

@@ -56,7 +56,7 @@ async def list_software(brand: str | None = None, category: str | None = None, s
 
 @router.post("/upload")
 async def upload_software(file: UploadFile = File(...), brand: str = Form(...), category: str = Form(...), series: str = Form(""), version: str = Form(...), description: str = Form(""), db: Session = Depends(get_db), admin: User = Depends(require_admin)):
-    brands = _valid_values(db, "brand")
+    brands = _valid_values(db, "sw_brand")
     categories = _valid_values(db, "sw_category")
     if brand not in brands: raise HTTPException(400, "无效品牌")
     if category not in categories: raise HTTPException(400, "无效分类")
@@ -73,7 +73,7 @@ async def upload_software(file: UploadFile = File(...), brand: str = Form(...), 
 
 @router.get("/brands/list")
 async def brands(db: Session = Depends(get_db)):
-    return ok(_valid_values(db, "brand"))
+    return ok(_valid_values(db, "sw_brand"))
 
 
 @router.get("/categories/list")
@@ -148,7 +148,7 @@ async def update_software(software_id: int, body: UpdateSoftwareBody, db: Sessio
     sw = db.query(Software).filter(Software.id == software_id).first()
     if not sw: raise HTTPException(404, "软件不存在")
     if body.brand is not None:
-        if body.brand not in _valid_values(db, "brand"):
+        if body.brand not in _valid_values(db, "sw_brand"):
             raise HTTPException(400, "无效品牌")
         sw.brand = body.brand
     if body.category is not None:
