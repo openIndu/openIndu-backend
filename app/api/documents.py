@@ -86,7 +86,7 @@ async def upload_document(file: UploadFile = File(...), brand: str = Form(...), 
     content = await file.read()
     if len(content) > settings.DOCUMENT_MAX_SIZE_MB * 1024 * 1024:
         raise HTTPException(413, "文件大小超过限制")
-    meta = storage_service.upload_file(content, file.filename, f"documents/{brand}", file.content_type or "application/pdf")
+    meta = storage_service.upload_file(content, file.filename, f"{settings.OSS_DOC_PREFIX}/{brand}", file.content_type or "application/pdf")
     doc = Document(filename=meta["filename"], original_name=file.filename, brand=brand, category=category, file_size=meta["file_size"], file_hash=meta["file_hash"], oss_key=meta["oss_key"], description=description)
     db.add(doc)
     db.commit()
