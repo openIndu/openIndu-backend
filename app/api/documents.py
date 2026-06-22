@@ -3,6 +3,7 @@ import logging
 from datetime import date, datetime
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, UploadFile
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -10,18 +11,21 @@ from app.core.database import SessionLocal
 from app.core.dependencies import get_db, require_admin, require_member
 from app.models.document import Document
 from app.models.download_log import DownloadLog
+from app.models.resource_tag import ResourceTag
 from app.models.user import User
 from app.services.rag_sync_service import sync_document
 from app.services.storage_service import storage_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/documents")
-BRANDS = ["siemens", "mitsubishi", "omron", "keyence", "inovance"]
-CATEGORIES = ["plc-manual", "hardware-manual", "driver-manual", "hmi-manual", "software-manual", "best-practice", "electrical-standard", "other"]
 
 
 def ok(data=None, message="操作成功"):
     return {"code": 200, "message": message, "data": data or {}}
+
+
+def _valid_values(db: Session, tag_type: str) -> list[str]:
+    return [t.value for t in db.query(ResourceTag).filter(ResourceTag.type == tag_type, ResourceTag.is_active == True).all()]  # noqa: E712
 
 
 def _sync_uploaded_document(doc_id: int):
@@ -77,9 +81,11 @@ async def list_documents(brand: str | None = None, category: str | None = None, 
 
 @router.post("/upload")
 async def upload_document(file: UploadFile = File(...), brand: str = Form(...), category: str = Form(...), description: str = Form(""), db: Session = Depends(get_db), admin: User = Depends(require_admin)):
-    if brand not in BRANDS:
+    brands = _valid_values(db, "brand")
+    categories = _valid_values(db, "doc_category")
+    if brand not in brands:
         raise HTTPException(400, "无效品牌")
-    if category not in CATEGORIES:
+    if category not in categories:
         raise HTTPException(400, "无效分类")
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(415, "仅支持 PDF 文件")
@@ -95,13 +101,15 @@ async def upload_document(file: UploadFile = File(...), brand: str = Form(...), 
 
 
 @router.get("/brands/list")
-async def brands():
-    return ok(BRANDS)
+async def brands(db: Session = Depends(get_db)):
+    values = _valid_values(db, "brand")
+    return ok(values)
 
 
 @router.get("/categories/list")
-async def categories():
-    return ok(CATEGORIES)
+async def categories(db: Session = Depends(get_db)):
+    values = _valid_values(db, "doc_category")
+    return ok(values)
 
 
 @router.get("/{doc_id}")
@@ -126,6 +134,37 @@ async def get_document_download_link(doc_id: int, request: Request, db: Session 
     db.commit()
     signed_url = storage_service.get_download_url(doc.oss_key)
     return ok({"download_url": signed_url["url"], "expires_in": signed_url["expires_in"], "filename": doc.original_name})
+
+
+class UpdateDocumentBody(BaseModel):
+    original_name: str | None = None
+    brand: str | None = None
+    category: str | None = None
+    description: str | None = None
+
+
+@router.patch("/{doc_id}")
+async def update_document(doc_id: int, body: UpdateDocumentBody, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    doc = db.query(Document).filter(Document.id == doc_id).first()
+    if not doc:
+        raise HTTPException(404, "文档不存在")
+    if body.brand is not None:
+        if body.brand not in _valid_values(db, "brand"):
+            raise HTTPException(400, "无效品牌")
+        doc.brand = body.brand
+    if body.category is not None:
+        if body.category not in _valid_values(db, "doc_category"):
+            raise HTTPException(400, "无效分类")
+        doc.category = body.category
+    if body.original_name is not None:
+        if not body.original_name.strip():
+            raise HTTPException(400, "文档名不能为空")
+        doc.original_name = body.original_name.strip()
+    if body.description is not None:
+        doc.description = body.description
+    db.commit()
+    db.refresh(doc)
+    return ok(doc.to_dict(), "更新成功")
 
 
 @router.patch("/{doc_id}/publish")

@@ -10,7 +10,7 @@ from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
 from starlette.responses import JSONResponse
 
-from app.api import admin, auth, brand_mapping, config, documents, files, portal, software, stats, sync, users, visits
+from app.api import admin, auth, brand_mapping, config, documents, files, portal, software, stats, sync, tags, users, visits
 from app.core.config import settings
 from app.core.database import engine
 from app.middleware.online_stats import OnlineStatsMiddleware
@@ -27,6 +27,7 @@ from app.models.sync_log import SyncLog  # noqa: F401
 from app.models.system_config import SystemConfig  # noqa: F401
 from app.models.token_blacklist import TokenBlacklist  # noqa: F401
 from app.models.user import User  # noqa: F401
+from app.models.resource_tag import ResourceTag  # noqa: F401
 from app.models.visit_event import VisitEvent  # noqa: F401
 from app.tasks.sync_task import SyncScheduler
 
@@ -99,7 +100,7 @@ app.add_middleware(SlowAPIMiddleware)
 app.add_middleware(OnlineStatsMiddleware)
 app.add_middleware(TokenBlacklistMiddleware)
 
-for router in [auth.router, users.router, stats.router, admin.router, documents.router, software.router, sync.router, config.router, brand_mapping.router, files.router, visits.router, portal.router]:
+for router in [auth.router, users.router, stats.router, admin.router, documents.router, software.router, sync.router, config.router, brand_mapping.router, files.router, visits.router, portal.router, tags.router]:
     app.include_router(router, prefix="/api/v1")
 
 
