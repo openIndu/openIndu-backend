@@ -172,6 +172,23 @@ async def get_document_download_link(doc_id: int, request: Request, db: Session 
     return ok({"download_url": signed_url["url"], "expires_in": signed_url["expires_in"], "filename": doc.original_name})
 
 
+@router.get("/{doc_id}/preview-link")
+async def get_document_preview_link(doc_id: int, request: Request, db: Session = Depends(get_db), current_user: User = Depends(require_member)):
+    """Return an inline presigned URL so the browser renders the PDF in‑page."""
+    doc = db.query(Document).filter(Document.id == doc_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    today_start = datetime.combine(date.today(), datetime.min.time())
+    today_count = db.query(DownloadLog).filter(DownloadLog.user_id == current_user.id, DownloadLog.resource_type == "document", DownloadLog.created_at >= today_start).count()
+    if today_count >= settings.DOWNLOAD_DAILY_LIMIT:
+        raise HTTPException(status_code=429, detail="今日文档下载次数已用完（5次/天）")
+    doc.download_count = (doc.download_count or 0) + 1
+    db.add(DownloadLog(user_id=current_user.id, resource_type="document", resource_id=doc_id, ip_address=client_ip(request)))
+    db.commit()
+    inline_url = storage_service.get_preview_url(doc.oss_key)
+    return ok({"preview_url": inline_url["url"], "expires_in": inline_url["expires_in"], "filename": doc.original_name})
+
+
 class UpdateDocumentBody(BaseModel):
     original_name: str | None = None
     brand: str | None = None

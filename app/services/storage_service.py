@@ -75,6 +75,21 @@ class StorageService:
             "expires_in": settings.PRESIGNED_URL_EXPIRE_MINUTES * 60,
         }
 
+    def get_preview_url(self, oss_key: str) -> dict:
+        """Return a presigned inline URL suitable for the browser PDF viewer."""
+        if self._backend == "local":
+            normalized_key = oss_key.lstrip("/")
+            expires_at = int(time.time()) + self.LOCAL_DOWNLOAD_TOKEN_TTL_SECONDS
+            token = self._sign_local_download(normalized_key, expires_at)
+            return {
+                "url": f"/api/v1/files/{quote(normalized_key)}?expires={expires_at}&token={token}",
+                "expires_in": self.LOCAL_DOWNLOAD_TOKEN_TTL_SECONDS,
+            }
+        url = self._impl.generate_presigned_url(
+            oss_key, settings.PRESIGNED_URL_EXPIRE_MINUTES, inline=True,
+        )
+        return {"url": url, "expires_in": settings.PRESIGNED_URL_EXPIRE_MINUTES * 60}
+
     def get_file_path(self, oss_key: str):
         """Only valid in local mode — returns the filesystem path."""
         if not self.is_local:
