@@ -197,7 +197,7 @@ def test_software_list_upload_get_add_delete(monkeypatch):
         _chain(items=[SimpleNamespace(value="utility")]),
     ]
     db.flush = lambda: None
-    assert asyncio.run(software.upload_software(file=file, brand="siemens", category="utility", series="", version="1.0", description="desc", db=db, admin=_user()))["message"] == "上传成功"
+    assert asyncio.run(software.upload_software(file=file, brand="siemens", category="utility", version="1.0", description="desc", db=db, admin=_user()))["message"] == "上传成功"
 
     db = MagicMock()
     db.query.return_value = _chain(first=sw)

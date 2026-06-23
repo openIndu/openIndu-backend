@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_db, require_admin
+from app.core.utils import ok
 from app.models.admin_audit_log import AdminAuditLog
 from app.models.login_session import LoginSession
 from app.models.user import User
@@ -15,10 +16,6 @@ router = APIRouter(prefix="/users")
 
 class RoleChange(BaseModel):
     role: str
-
-
-def ok(data=None, message="操作成功"):
-    return {"code": 200, "message": message, "data": data or {}}
 
 
 def audit(db: Session, admin_id: int, target_user_id: int, action: str, detail: dict | None = None):

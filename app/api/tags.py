@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_db, require_admin
+from app.core.utils import ok
 from app.models.document import Document
 from app.models.resource_tag import ResourceTag
 from app.models.software import Software
@@ -11,15 +12,8 @@ from app.models.user import User
 
 router = APIRouter(prefix="/tags")
 
-VALID_TYPES = {"doc_brand", "sw_brand", "doc_category", "sw_category", "doc_series", "sw_series"}
-SERIES_TYPES = {"doc_series", "sw_series"}
-
-
-def ok(data=None, message="操作成功"):
-    # NOTE: use an explicit None check, not `data or {}` — an empty list (e.g. no
-    # series for a brand+category combo) is falsy and would be coerced to {},
-    # breaking array consumers on the frontend (`.filter is not a function`).
-    return {"code": 200, "message": message, "data": data if data is not None else {}}
+VALID_TYPES = {"doc_brand", "sw_brand", "doc_category", "sw_category", "doc_series"}
+SERIES_TYPES = {"doc_series"}
 
 
 class CreateTagBody(BaseModel):
@@ -115,12 +109,8 @@ async def delete_tag(tag_id: int, db: Session = Depends(get_db), _: User = Depen
             db.query(ResourceTag).filter(ResourceTag.type == "doc_series", ResourceTag.parent_value == tag.value).delete()
     elif tag.type == "sw_category":
         in_use = db.query(Software).filter(Software.category == tag.value).first()
-        if not in_use:
-            db.query(ResourceTag).filter(ResourceTag.type == "sw_series", ResourceTag.parent_value == tag.value).delete()
     elif tag.type == "doc_series":
         in_use = db.query(Document).filter(Document.series == tag.value).first()
-    elif tag.type == "sw_series":
-        in_use = db.query(Software).filter(Software.series == tag.value).first()
     else:
         in_use = None
     if in_use:
