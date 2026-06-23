@@ -59,38 +59,63 @@ def _check_daily_limit(db: Session, user: User):
 
 @router.get("")
 async def list_software(brand: str | None = None, category: str | None = None, keyword: str | None = None, published_only: bool = False, expand_versions: bool = False, page: int = Query(1, ge=1), size: int = Query(20, ge=1, le=100), db: Session = Depends(get_db)):
-    q = db.query(Software).filter(Software.is_active.is_(True))
-    if published_only:
-        q = q.filter(Software.is_published == True)  # noqa: E712
-    if brand: q = q.filter(Software.brand == brand)
-    if category: q = q.filter(Software.category == category)
-    if keyword: q = q.filter(Software.original_name.ilike(f"%{keyword}%"))
-    total = q.count()
-    rows = q.order_by(Software.created_at.desc()).offset((page - 1) * size).limit(size).all()
-    if not expand_versions:
-        items = [s.to_dict() for s in rows]
-        return ok({"items": items, "total": total, "page": page, "size": size})
-    # 摊平为「每个版本一行」 — 同一软件的多个版本在 UI 上各占一行。
-    # 软件本身的字段（品牌、分类等）被复制到每行，便于前端无脑渲染表格；
-    # 同时附上 version_id / version / file_size / oss_key 让操作（下载/删除）能定位到版本。
-    items = []
-    for s in rows:
-        base = s.to_dict()
-        if not s.versions:
-            items.append(base)
-            continue
-        for v in sorted(s.versions, key=lambda x: x.upload_time, reverse=True):
+    if expand_versions:
+        # Version-grained listing: one row per SoftwareVersion. Publish state
+        # and download counts come from the version, not the parent software.
+        from app.models.software import SoftwareVersion  # local import keeps the non-expand path lean
+        vq = db.query(SoftwareVersion).join(Software, SoftwareVersion.software_id == Software.id).filter(
+            Software.is_active.is_(True), SoftwareVersion.is_active.is_(True),
+        )
+        if published_only:
+            vq = vq.filter(SoftwareVersion.is_published == True)  # noqa: E712
+        if brand: vq = vq.filter(Software.brand == brand)
+        if category: vq = vq.filter(Software.category == category)
+        if keyword:
+            # Match either the per-version name (preferred) or the parent software name.
+            vq = vq.filter((SoftwareVersion.original_name.ilike(f"%{keyword}%")) | (Software.original_name.ilike(f"%{keyword}%")))
+        total = vq.count()
+        rows = vq.order_by(SoftwareVersion.upload_time.desc()).offset((page - 1) * size).limit(size).all()
+        items = []
+        for v in rows:
+            s = v.software
+            # On expand rows the user-facing identity is the version, so use the
+            # version's original_name as the row's name and the version's counters.
             items.append({
-                **base,
+                "id": s.id,
+                "filename": v.oss_key.rsplit("/", 1)[-1],
+                "original_name": v.original_name or s.original_name,
+                "brand": s.brand,
+                "category": s.category,
+                "series": s.series,
+                "description": s.description,
+                "created_at": s.created_at.isoformat() if s.created_at else None,
                 "version_id": v.id,
                 "version": v.version,
                 "latest_version_size": v.file_size,
                 "file_hash": v.file_hash,
                 "oss_key": v.oss_key,
                 "version_upload_time": v.upload_time.isoformat() if v.upload_time else None,
+                "download_count": v.download_count,
                 "version_download_count": v.download_count,
+                "is_published": v.is_published,
                 "is_latest_version": v.version == s.latest_version,
             })
+        return ok({"items": items, "total": total, "page": page, "size": size})
+
+    q = db.query(Software).filter(Software.is_active.is_(True))
+    if published_only:
+        # When the caller doesn't want expansion, treat the software as
+        # published if any of its versions is published — keeps the legacy
+        # collapsed view useful even though publish lives on the version now.
+        from app.models.software import SoftwareVersion
+        published_ids = db.query(SoftwareVersion.software_id).filter(SoftwareVersion.is_published == True).distinct()  # noqa: E712
+        q = q.filter(Software.id.in_(published_ids))
+    if brand: q = q.filter(Software.brand == brand)
+    if category: q = q.filter(Software.category == category)
+    if keyword: q = q.filter(Software.original_name.ilike(f"%{keyword}%"))
+    total = q.count()
+    rows = q.order_by(Software.created_at.desc()).offset((page - 1) * size).limit(size).all()
+    items = [s.to_dict() for s in rows]
     return ok({"items": items, "total": total, "page": page, "size": size})
 
 
@@ -112,7 +137,7 @@ async def upload_software(file: UploadFile = File(...), brand: str = Form(...), 
     try:
         db.add(sw)
         db.flush()
-        db.add(SoftwareVersion(software_id=sw.id, version=version, file_size=meta["file_size"], file_hash=meta["file_hash"], oss_key=meta["oss_key"]))
+        db.add(SoftwareVersion(software_id=sw.id, version=version, original_name=file.filename, file_size=meta["file_size"], file_hash=meta["file_hash"], oss_key=meta["oss_key"]))
         db.commit()
         db.refresh(sw)
     except Exception:
@@ -267,7 +292,7 @@ async def upload_complete(body: UploadCompleteBody, db: Session = Depends(get_db
             await run_in_threadpool(storage_service.delete_file, oss_key)
             raise HTTPException(400, "软件不存在")
         try:
-            db.add(SoftwareVersion(software_id=sw.id, version=claims["version"],
+            db.add(SoftwareVersion(software_id=sw.id, version=claims["version"], original_name=claims["filename"],
                                    file_size=claims["size"], file_hash=body.file_hash, oss_key=oss_key))
             sw.latest_version = claims["version"]
             db.commit()
@@ -284,7 +309,7 @@ async def upload_complete(body: UploadCompleteBody, db: Session = Depends(get_db
     try:
         db.add(sw)
         db.flush()
-        db.add(SoftwareVersion(software_id=sw.id, version=claims["version"],
+        db.add(SoftwareVersion(software_id=sw.id, version=claims["version"], original_name=claims["filename"],
                                file_size=claims["size"], file_hash=body.file_hash, oss_key=oss_key))
         db.commit()
         db.refresh(sw)
@@ -358,7 +383,7 @@ async def add_version(software_id: int, file: UploadFile = File(...), version: s
     if not sw: raise HTTPException(404, "软件不存在")
     if not file.filename or _ext(file.filename) not in ALLOWED_EXTS: raise HTTPException(415, "不支持的软件包格式")
     meta = await run_in_threadpool(storage_service.upload_file, file.file, file.filename, f"{settings.OSS_SOFTWARE_PREFIX}/{sw.brand}", file.content_type)
-    ver = SoftwareVersion(software_id=sw.id, version=version, file_size=meta["file_size"], file_hash=meta["file_hash"], oss_key=meta["oss_key"])
+    ver = SoftwareVersion(software_id=sw.id, version=version, original_name=file.filename, file_size=meta["file_size"], file_hash=meta["file_hash"], oss_key=meta["oss_key"])
     sw.latest_version = version
     db.add(ver); db.commit(); db.refresh(ver)
     return ok(ver.to_dict(), "版本已添加")
@@ -403,29 +428,35 @@ async def update_software(software_id: int, body: UpdateSoftwareBody, db: Sessio
 
 @router.patch("/publish/bulk")
 async def bulk_publish_software(body: "BulkPublishSoftwareBody", db: Session = Depends(get_db), admin: User = Depends(require_admin)):
-    q = db.query(Software)
-    if body.ids is not None:
+    # Publish is per-version now. Callers pass version_ids (preferred) or the
+    # old ids[] (= software_ids; applies to ALL versions of those softwares).
+    vq = db.query(SoftwareVersion).join(Software, SoftwareVersion.software_id == Software.id)
+    if body.version_ids is not None:
+        if not body.version_ids:
+            raise HTTPException(400, "请选择要操作的版本")
+        vq = vq.filter(SoftwareVersion.id.in_(body.version_ids))
+    elif body.ids is not None:
         if not body.ids:
             raise HTTPException(400, "请选择要操作的软件")
-        q = q.filter(Software.id.in_(body.ids))
+        vq = vq.filter(SoftwareVersion.software_id.in_(body.ids))
     else:
         if body.brand:
-            q = q.filter(Software.brand == body.brand)
+            vq = vq.filter(Software.brand == body.brand)
         if body.category:
-            q = q.filter(Software.category == body.category)
+            vq = vq.filter(Software.category == body.category)
         if body.keyword:
-            q = q.filter(Software.original_name.ilike(f"%{body.keyword}%"))
-    # Only flip rows whose state differs from the target — keeps the operation
-    # idempotent and the response count meaningful.
-    rows = q.filter(Software.is_published == (not body.publish)).all()
-    for sw in rows:
-        sw.is_published = body.publish
+            vq = vq.filter((SoftwareVersion.original_name.ilike(f"%{body.keyword}%")) | (Software.original_name.ilike(f"%{body.keyword}%")))
+    # Only flip rows whose state differs from the target.
+    rows = vq.filter(SoftwareVersion.is_published == (not body.publish)).all()
+    for v in rows:
+        v.is_published = body.publish
     db.commit()
     return ok({"count": len(rows), "publish": body.publish}, "发布成功" if body.publish else "取消发布成功")
 
 
 class BulkPublishSoftwareBody(BaseModel):
-    ids: list[int] | None = None
+    ids: list[int] | None = None  # software ids — kept for backward compat (publishes all versions of those softwares)
+    version_ids: list[int] | None = None
     brand: str | None = None
     category: str | None = None
     keyword: str | None = None
@@ -434,11 +465,33 @@ class BulkPublishSoftwareBody(BaseModel):
 
 @router.patch("/{software_id}/publish")
 async def toggle_publish(software_id: int, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    """Legacy: toggle publish on ALL versions of a software.
+
+    Kept so the older single-row toggle button keeps working — it now flips
+    every version of the software to the opposite of whatever the majority
+    is, then mirrors that state onto Software.is_published for compatibility.
+    """
     sw = db.query(Software).filter(Software.id == software_id).first()
     if not sw: raise HTTPException(404, "软件不存在")
-    sw.is_published = not sw.is_published
+    target = not sw.is_published
+    for v in sw.versions:
+        v.is_published = target
+    sw.is_published = target
     db.commit(); db.refresh(sw)
     return ok(sw.to_dict(), "发布状态已更新")
+
+
+@router.patch("/{software_id}/versions/{version_id}/publish")
+async def toggle_version_publish(software_id: int, version_id: int, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    v = db.query(SoftwareVersion).filter(SoftwareVersion.id == version_id, SoftwareVersion.software_id == software_id).first()
+    if not v: raise HTTPException(404, "版本不存在")
+    v.is_published = not v.is_published
+    # Reflect "any version published" onto the parent so the legacy collapsed
+    # listing still shows the right status badge.
+    sw = v.software
+    sw.is_published = any(vv.is_published for vv in sw.versions)
+    db.commit(); db.refresh(v)
+    return ok(v.to_dict(), "发布状态已更新")
 
 
 @router.delete("/{software_id}")
