@@ -53,8 +53,10 @@ class Settings(BaseSettings):
 
     # --- Direct-to-OSS multipart upload (large software packages) ---
     # Part size for multipart uploads. Must be ≥ 5 MiB (S3/OSS minimum).
-    # 32 MiB → a 5 GiB package is ~160 parts.
-    UPLOAD_PART_SIZE_MB: int = 32
+    # 64 MiB strikes a good balance: a 5 GiB package is ~80 parts (few enough
+    # to keep HTTP overhead low), each part finishes in ~5–30 s on typical
+    # home upstreams (≥2 MB/s), keeping the progress bar responsive.
+    UPLOAD_PART_SIZE_MB: int = 64
     # How long presigned PUT URLs stay valid. Large uploads take time, so
     # default to 2 hours.
     UPLOAD_PRESIGN_EXPIRE_MINUTES: int = 120
