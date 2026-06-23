@@ -2,7 +2,7 @@
 
 Usage:
     from app.services.storage_service import storage_service
-    meta = storage_service.upload_file(content, name, prefix)
+    meta = storage_service.upload_file(file_stream, name, prefix)
     url  = storage_service.get_download_url(oss_key)
 """
 
@@ -34,9 +34,9 @@ class StorageService:
 
     # -- delegated methods -------------------------------------------------
 
-    def upload_file(self, file_content: bytes, original_name: str, prefix: str,
+    def upload_file(self, file_stream, original_name: str, prefix: str,
                     content_type: str | None = None) -> dict:
-        return self._impl.upload_file(file_content, original_name, prefix, content_type)
+        return self._impl.upload_file(file_stream, original_name, prefix, content_type)
 
     def delete_file(self, oss_key: str) -> None:
         self._impl.delete_file(oss_key)
