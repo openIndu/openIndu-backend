@@ -80,14 +80,16 @@ class OSSService:
                                 inline: bool = False) -> str:
         """Generate a presigned GET URL.
 
-        When inline=True the URL forces inline disposition + a PDF content type
-        so browsers render it in the built-in PDF viewer instead of downloading.
+        When inline=True the URL forces inline disposition so browsers render
+        the file in the built-in viewer (the object's stored Content-Type —
+        application/pdf for documents uploaded via /documents/upload — is what
+        the browser actually sees; Aliyun OSS rejects ResponseContentType as a
+        query override with "Can not override response header on content-type").
         Default (False) keeps the attachment behavior for the download button.
         """
         params = {"Bucket": self.bucket, "Key": oss_key}
         if inline:
             params["ResponseContentDisposition"] = "inline"
-            params["ResponseContentType"] = "application/pdf"
         else:
             params["ResponseContentDisposition"] = "attachment"
         return self.client.generate_presigned_url(
