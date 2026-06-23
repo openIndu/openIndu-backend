@@ -6,18 +6,18 @@ Usage:
 """
 
 import io
+import os
 import re
 import sys
-import os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import fitz  # PyMuPDF
 
+from app.core.config import settings
 from app.core.database import SessionLocal
 from app.models.document import Document
 from app.services.oss_service import oss_service
-from app.core.config import settings
 
 TARGET_IDS = [132, 166, 239]
 
@@ -175,7 +175,7 @@ def main(write: bool = False):
         print(f"[id={doc_id}] {old_key}")
         print(f"  Brand: {brand_cn}  Type: {type_cn}")
 
-        print(f"  Downloading…", end=" ", flush=True)
+        print("  Downloading…", end=" ", flush=True)
         try:
             resp = oss_service.client.get_object(Bucket=settings.OSS_BUCKET, Key=old_key)
             pdf_bytes = resp["Body"].read()
@@ -186,7 +186,7 @@ def main(write: bool = False):
 
         content_title = extract_content_title(pdf_bytes, brand_cn=brand_cn)
         if not content_title:
-            print(f"  WARNING: no content title extracted, skipping\n")
+            print("  WARNING: no content title extracted, skipping\n")
             continue
 
         # Truncate at " 是 " / " was " in product descriptions → keep product name only
@@ -202,7 +202,7 @@ def main(write: bool = False):
         new_key = f"{prefix}/{new_filename}"
 
         if new_key == old_key:
-            print(f"  → No change needed\n")
+            print("  → No change needed\n")
             continue
 
         # Collision check
@@ -211,7 +211,7 @@ def main(write: bool = False):
             base, ext = new_key.rsplit(".", 1)
             new_key = f"{base} (2).{ext}"
             new_filename = new_key.split("/")[-1]
-            print(f"  ⚠ Collision, appending (2)")
+            print("  ⚠ Collision, appending (2)")
         except Exception:
             pass
 
@@ -229,7 +229,7 @@ def main(write: bool = False):
                 doc.oss_key = new_key
                 doc.filename = new_filename
                 doc.original_name = new_filename
-                print(f"  OSS ✓  DB ✓")
+                print("  OSS ✓  DB ✓")
             except Exception as e:
                 print(f"  ERROR: {e}")
 

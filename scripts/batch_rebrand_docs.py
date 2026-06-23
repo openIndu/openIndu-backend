@@ -13,18 +13,18 @@ Usage:
 """
 
 import io
+import os
 import re
 import sys
-import os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import fitz  # PyMuPDF
 
+from app.core.config import settings
 from app.core.database import SessionLocal
 from app.models.document import Document
 from app.services.oss_service import oss_service
-from app.core.config import settings
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 

@@ -5,18 +5,17 @@ Usage:
     python scripts/import_legacy_docs.py --write    # write to DB
 """
 
+import os
 import re
 import sys
-import hashlib
-import os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from app.core.config import settings
 from app.core.database import SessionLocal
 from app.models.document import Document
 from app.models.resource_tag import ResourceTag
 from app.services.oss_service import oss_service
-from app.core.config import settings
 
 # ── Brand mapping: OSS Chinese folder → DB slug ──────────────────────────────
 BRAND_MAP: dict[str, str] = {
