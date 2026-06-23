@@ -2,6 +2,7 @@
 from fastapi import APIRouter, Depends
 
 from app.core.dependencies import require_auth
+from app.core.utils import ok
 from app.models.user import User
 
 router = APIRouter(prefix="/brand-mapping")
@@ -13,10 +14,6 @@ BRAND_OVERVIEW = {
     "keyence": "基恩士 KV-8000",
     "inovance": "汇川 AM600 / Easy 系列",
 }
-
-
-def ok(data=None, message="操作成功"):
-    return {"code": 200, "message": message, "data": data or {}}
 
 
 @router.get("/overview")

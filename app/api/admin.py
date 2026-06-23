@@ -3,15 +3,11 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_db, require_admin
-from app.core.utils import mask_phone
+from app.core.utils import mask_phone, ok
 from app.models.admin_audit_log import AdminAuditLog
 from app.models.user import User
 
 router = APIRouter(prefix="/admin")
-
-
-def ok(data=None, message="操作成功"):
-    return {"code": 200, "message": message, "data": data or {}}
 
 
 @router.get("/audit-logs")

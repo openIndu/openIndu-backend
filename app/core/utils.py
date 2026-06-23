@@ -15,3 +15,13 @@ def mask_phone(phone: str | None) -> str | None:
     if len(s) >= 7:
         return f"{s[:3]}****{s[-4:]}"
     return s
+
+
+def ok(data=None, message: str = "操作成功"):
+    """Standard success envelope shared by all API routers.
+
+    Use an explicit ``None`` check, not ``data or {}`` — an empty list (e.g. a
+    brand+category combo with no series) is falsy and would be coerced to ``{}``,
+    breaking array consumers on the frontend (``.filter is not a function``).
+    """
+    return {"code": 200, "message": message, "data": data if data is not None else {}}

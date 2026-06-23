@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.dependencies import get_db, require_admin, require_member
+from app.core.utils import ok
 from app.models.download_log import DownloadLog
 from app.models.resource_tag import ResourceTag
 from app.models.software import Software, SoftwareVersion
@@ -15,10 +16,6 @@ from app.services.storage_service import storage_service
 
 router = APIRouter(prefix="/software")
 ALLOWED_EXTS = {".zip", ".exe", ".msi", ".rar", ".7z"}
-
-
-def ok(data=None, message="操作成功"):
-    return {"code": 200, "message": message, "data": data or {}}
 
 
 def _ext(filename: str) -> str:
@@ -42,20 +39,19 @@ def _check_daily_limit(db: Session, user: User):
 
 
 @router.get("")
-async def list_software(brand: str | None = None, category: str | None = None, series: str | None = None, keyword: str | None = None, published_only: bool = False, page: int = Query(1, ge=1), size: int = Query(20, ge=1, le=100), db: Session = Depends(get_db)):
+async def list_software(brand: str | None = None, category: str | None = None, keyword: str | None = None, published_only: bool = False, page: int = Query(1, ge=1), size: int = Query(20, ge=1, le=100), db: Session = Depends(get_db)):
     q = db.query(Software).filter(Software.is_active.is_(True))
     if published_only:
         q = q.filter(Software.is_published == True)  # noqa: E712
     if brand: q = q.filter(Software.brand == brand)
     if category: q = q.filter(Software.category == category)
-    if series: q = q.filter(Software.series == series)
     if keyword: q = q.filter(Software.original_name.ilike(f"%{keyword}%"))
     total = q.count(); items = [s.to_dict() for s in q.order_by(Software.created_at.desc()).offset((page - 1) * size).limit(size).all()]
     return ok({"items": items, "total": total, "page": page, "size": size})
 
 
 @router.post("/upload")
-async def upload_software(file: UploadFile = File(...), brand: str = Form(...), category: str = Form(...), series: str = Form(""), version: str = Form(...), description: str = Form(""), db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+async def upload_software(file: UploadFile = File(...), brand: str = Form(...), category: str = Form(...), version: str = Form(...), description: str = Form(""), db: Session = Depends(get_db), admin: User = Depends(require_admin)):
     # 1. 所有前置校验 — 失败时不产生副作用
     brands = _valid_values(db, "sw_brand")
     categories = _valid_values(db, "sw_category")
@@ -69,7 +65,7 @@ async def upload_software(file: UploadFile = File(...), brand: str = Form(...), 
     meta = storage_service.upload_file(content, file.filename, f"{settings.OSS_SOFTWARE_PREFIX}/{brand}", file.content_type or "application/octet-stream")
 
     # 3. 然后写入 DB（两条记录）— DB 失败时删除已上传的文件
-    sw = Software(filename=meta["filename"], original_name=file.filename, brand=brand, category=category, series=series or None, latest_version=version, description=description)
+    sw = Software(filename=meta["filename"], original_name=file.filename, brand=brand, category=category, latest_version=version, description=description)
     try:
         db.add(sw)
         db.flush()
@@ -152,7 +148,6 @@ class UpdateSoftwareBody(BaseModel):
     original_name: str | None = None
     brand: str | None = None
     category: str | None = None
-    series: str | None = None
     description: str | None = None
 
 
@@ -168,10 +163,6 @@ async def update_software(software_id: int, body: UpdateSoftwareBody, db: Sessio
         if body.category not in _valid_values(db, "sw_category"):
             raise HTTPException(400, "无效分类")
         sw.category = body.category
-        if body.series is None:
-            sw.series = None
-    if body.series is not None:
-        sw.series = body.series or None
     if body.original_name is not None:
         if not body.original_name.strip():
             raise HTTPException(400, "软件名不能为空")

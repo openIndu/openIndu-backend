@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_db, require_admin
+from app.core.utils import ok
 from app.models.portal_content import PortalContent
 from app.models.user import User
 
@@ -13,10 +14,6 @@ router = APIRouter(prefix="/portal")
 class ContentIn(BaseModel):
     content: dict = {}
     sort_order: int = 0
-
-
-def ok(data=None, message="操作成功"):
-    return {"code": 200, "message": message, "data": data or {}}
 
 
 @router.get("/hero")

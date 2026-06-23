@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.database import SessionLocal
 from app.core.dependencies import get_db, require_admin, require_member
+from app.core.utils import ok
 from app.models.document import Document
 from app.models.download_log import DownloadLog
 from app.models.resource_tag import ResourceTag
@@ -18,10 +19,6 @@ from app.services.storage_service import storage_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/documents")
-
-
-def ok(data=None, message="操作成功"):
-    return {"code": 200, "message": message, "data": data or {}}
 
 
 def _valid_values(db: Session, tag_type: str) -> list[str]:

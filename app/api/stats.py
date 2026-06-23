@@ -6,7 +6,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_db, require_admin
-from app.core.utils import mask_phone
+from app.core.utils import mask_phone, ok
 from app.models.document import Document
 from app.models.login_session import LoginSession
 from app.models.software import Software
@@ -17,10 +17,6 @@ from app.services.geo_service import GEO_POINTS
 router = APIRouter(prefix="/stats")
 
 CST = timezone(timedelta(hours=8))  # Asia/Shanghai
-
-
-def ok(data=None, message="操作成功"):
-    return {"code": 200, "message": message, "data": data or {}}
 
 
 def _now():

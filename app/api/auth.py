@@ -7,6 +7,7 @@ from slowapi.util import get_remote_address
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_db, require_auth
+from app.core.utils import ok
 from app.models.user import User
 from app.services.auth_service import auth_service
 
@@ -35,10 +36,6 @@ class ProfileUpdateRequest(BaseModel):
 class PhoneChangeRequest(BaseModel):
     new_phone: str
     code: str
-
-
-def ok(data=None, message: str = "操作成功"):
-    return {"code": 200, "message": message, "data": data or {}}
 
 
 @router.post("/send-code")

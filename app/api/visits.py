@@ -5,15 +5,12 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_db
+from app.core.utils import ok
 from app.models.visit_event import VisitEvent
 from app.services.auth_service import decode_token
 from app.services.geo_service import resolve_ip_geo
 
 router = APIRouter(prefix="/visits")
-
-
-def ok(data=None, message="操作成功"):
-    return {"code": 200, "message": message, "data": data or {}}
 
 
 def client_ip(request: Request) -> str:

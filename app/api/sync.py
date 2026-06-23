@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import SessionLocal
 from app.core.dependencies import get_db, require_admin, require_auth
+from app.core.utils import ok
 from app.models.document import Document
 from app.models.sync_log import SyncLog
 from app.models.user import User
@@ -18,10 +19,6 @@ router = APIRouter(prefix="/sync")
 
 class TriggerBody(BaseModel):
     mode: str = "incremental"
-
-
-def ok(data=None, message="操作成功"):
-    return {"code": 200, "message": message, "data": data or {}}
 
 
 def _run_sync_background(mode: str):
