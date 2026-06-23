@@ -47,6 +47,10 @@ def _file_size(file: UploadFile) -> int:
 
 
 def _check_daily_limit(db: Session, user: User):
+    # Admins bypass the 5/day cap — they curate the catalog and shouldn't be
+    # locked out while validating uploads or fielding member tickets.
+    if user.role == "admin":
+        return
     today_start = datetime.combine(date.today(), datetime.min.time())
     count = db.query(DownloadLog).filter(DownloadLog.user_id == user.id, DownloadLog.resource_type == "software", DownloadLog.created_at >= today_start).count()
     if count >= settings.DOWNLOAD_DAILY_LIMIT:
