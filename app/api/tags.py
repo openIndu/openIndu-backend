@@ -16,7 +16,10 @@ SERIES_TYPES = {"doc_series", "sw_series"}
 
 
 def ok(data=None, message="操作成功"):
-    return {"code": 200, "message": message, "data": data or {}}
+    # NOTE: use an explicit None check, not `data or {}` — an empty list (e.g. no
+    # series for a brand+category combo) is falsy and would be coerced to {},
+    # breaking array consumers on the frontend (`.filter is not a function`).
+    return {"code": 200, "message": message, "data": data if data is not None else {}}
 
 
 class CreateTagBody(BaseModel):
