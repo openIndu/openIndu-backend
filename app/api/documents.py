@@ -40,6 +40,21 @@ def _validate_doc_series(db: Session, brand: str, category: str, series: str | N
         raise HTTPException(400, "无效系列")
 
 
+def _check_document_daily_limit(db: Session, user: User) -> None:
+    # Admins bypass the 5/day cap — they curate the catalog and shouldn't be
+    # locked out while reviewing uploads or fielding member tickets.
+    if user.role == "admin":
+        return
+    today_start = datetime.combine(date.today(), datetime.min.time())
+    count = db.query(DownloadLog).filter(
+        DownloadLog.user_id == user.id,
+        DownloadLog.resource_type == "document",
+        DownloadLog.created_at >= today_start,
+    ).count()
+    if count >= settings.DOWNLOAD_DAILY_LIMIT:
+        raise HTTPException(status_code=429, detail="今日文档下载次数已用完（5次/天）")
+
+
 def _file_size(file: UploadFile) -> int:
     """Return upload size without loading the file into memory."""
     if file.size is not None:
@@ -161,10 +176,7 @@ async def get_document_download_link(doc_id: int, request: Request, db: Session 
     doc = db.query(Document).filter(Document.id == doc_id).first()
     if not doc:
         raise HTTPException(status_code=404, detail="文档不存在")
-    today_start = datetime.combine(date.today(), datetime.min.time())
-    today_count = db.query(DownloadLog).filter(DownloadLog.user_id == current_user.id, DownloadLog.resource_type == "document", DownloadLog.created_at >= today_start).count()
-    if today_count >= settings.DOWNLOAD_DAILY_LIMIT:
-        raise HTTPException(status_code=429, detail="今日文档下载次数已用完（5次/天）")
+    _check_document_daily_limit(db, current_user)
     doc.download_count = (doc.download_count or 0) + 1
     db.add(DownloadLog(user_id=current_user.id, resource_type="document", resource_id=doc_id, ip_address=client_ip(request)))
     db.commit()
@@ -178,10 +190,7 @@ async def get_document_preview_link(doc_id: int, request: Request, db: Session =
     doc = db.query(Document).filter(Document.id == doc_id).first()
     if not doc:
         raise HTTPException(status_code=404, detail="文档不存在")
-    today_start = datetime.combine(date.today(), datetime.min.time())
-    today_count = db.query(DownloadLog).filter(DownloadLog.user_id == current_user.id, DownloadLog.resource_type == "document", DownloadLog.created_at >= today_start).count()
-    if today_count >= settings.DOWNLOAD_DAILY_LIMIT:
-        raise HTTPException(status_code=429, detail="今日文档下载次数已用完（5次/天）")
+    _check_document_daily_limit(db, current_user)
     doc.download_count = (doc.download_count or 0) + 1
     db.add(DownloadLog(user_id=current_user.id, resource_type="document", resource_id=doc_id, ip_address=client_ip(request)))
     db.commit()
