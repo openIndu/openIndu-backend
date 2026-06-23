@@ -42,7 +42,7 @@ class Settings(BaseSettings):
 
     # OSS path prefixes — override in .env to match your bucket layout
     OSS_DOC_PREFIX: str = "documents"
-    OSS_SOFTWARE_PREFIX: str = "software"
+    OSS_SOFTWARE_PREFIX: str = "soft"
     OSS_LEGACY_DOC_PREFIX: str = "doc"
 
     DOWNLOAD_DAILY_LIMIT: int = 5

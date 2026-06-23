@@ -12,7 +12,7 @@ from app.services.storage_service import storage_service
 router = APIRouter(prefix="/files")
 DEBUG_PLACEHOLDERS = {
     "documents/debug-manual.pdf": b"%PDF-1.4\n% openIndu debug manual placeholder\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Count 0>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n",
-    "software/debug-tool.zip": b"PK\x05\x06" + b"\x00" * 18,
+    "soft/debug-tool.zip": b"PK\x05\x06" + b"\x00" * 18,
 }
 
 

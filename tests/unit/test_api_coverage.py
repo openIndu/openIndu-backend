@@ -334,10 +334,10 @@ def test_files_api_creates_debug_placeholder(tmp_path, monkeypatch):
     from app.api import files
 
     monkeypatch.setattr(files.settings, "DATA_DIR", str(tmp_path))
-    target = tmp_path / "software" / "debug-tool.zip"
-    files.ensure_debug_placeholder("software/debug-tool.zip")
+    target = tmp_path / "soft" / "debug-tool.zip"
+    files.ensure_debug_placeholder("soft/debug-tool.zip")
     assert target.exists()
-    assert target.read_bytes() == files.DEBUG_PLACEHOLDERS["software/debug-tool.zip"]
+    assert target.read_bytes() == files.DEBUG_PLACEHOLDERS["soft/debug-tool.zip"]
 
 
 def test_storage_service_facade_paths(monkeypatch):
