@@ -58,14 +58,39 @@ def _check_daily_limit(db: Session, user: User):
 
 
 @router.get("")
-async def list_software(brand: str | None = None, category: str | None = None, keyword: str | None = None, published_only: bool = False, page: int = Query(1, ge=1), size: int = Query(20, ge=1, le=100), db: Session = Depends(get_db)):
+async def list_software(brand: str | None = None, category: str | None = None, keyword: str | None = None, published_only: bool = False, expand_versions: bool = False, page: int = Query(1, ge=1), size: int = Query(20, ge=1, le=100), db: Session = Depends(get_db)):
     q = db.query(Software).filter(Software.is_active.is_(True))
     if published_only:
         q = q.filter(Software.is_published == True)  # noqa: E712
     if brand: q = q.filter(Software.brand == brand)
     if category: q = q.filter(Software.category == category)
     if keyword: q = q.filter(Software.original_name.ilike(f"%{keyword}%"))
-    total = q.count(); items = [s.to_dict() for s in q.order_by(Software.created_at.desc()).offset((page - 1) * size).limit(size).all()]
+    total = q.count()
+    rows = q.order_by(Software.created_at.desc()).offset((page - 1) * size).limit(size).all()
+    if not expand_versions:
+        items = [s.to_dict() for s in rows]
+        return ok({"items": items, "total": total, "page": page, "size": size})
+    # 摊平为「每个版本一行」 — 同一软件的多个版本在 UI 上各占一行。
+    # 软件本身的字段（品牌、分类等）被复制到每行，便于前端无脑渲染表格；
+    # 同时附上 version_id / version / file_size / oss_key 让操作（下载/删除）能定位到版本。
+    items = []
+    for s in rows:
+        base = s.to_dict()
+        if not s.versions:
+            items.append(base)
+            continue
+        for v in sorted(s.versions, key=lambda x: x.upload_time, reverse=True):
+            items.append({
+                **base,
+                "version_id": v.id,
+                "version": v.version,
+                "latest_version_size": v.file_size,
+                "file_hash": v.file_hash,
+                "oss_key": v.oss_key,
+                "version_upload_time": v.upload_time.isoformat() if v.upload_time else None,
+                "version_download_count": v.download_count,
+                "is_latest_version": v.version == s.latest_version,
+            })
     return ok({"items": items, "total": total, "page": page, "size": size})
 
 
