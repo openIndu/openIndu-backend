@@ -24,6 +24,15 @@ class Software(Base):
     versions = relationship("SoftwareVersion", back_populates="software", cascade="all, delete-orphan")
 
     def to_dict(self, include_versions: bool = False) -> dict:
+        # latest_version_size = size of the version row whose tag matches
+        # `latest_version`. Surfaced on the list so the admin UI can show a
+        # size column without an extra round-trip per row.
+        latest_size = None
+        if self.latest_version:
+            for v in self.versions:
+                if v.version == self.latest_version:
+                    latest_size = v.file_size
+                    break
         data = {
             "id": self.id,
             "filename": self.filename,
@@ -32,6 +41,7 @@ class Software(Base):
             "category": self.category,
             "series": self.series,
             "latest_version": self.latest_version,
+            "latest_version_size": latest_size,
             "download_count": self.download_count,
             "description": self.description,
             "is_active": self.is_active,
