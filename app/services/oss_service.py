@@ -1,12 +1,12 @@
 """S3-compatible OSS service used for documents and software packages."""
 import hashlib
-import uuid
 from typing import BinaryIO
 
 import boto3
 from botocore.config import Config
 
 from app.core.config import settings
+from app.core.utils import oss_key_for_upload
 
 # Streaming chunk for hash + multipart upload. Keeps memory flat regardless of
 # file size (software packages may reach the GB range).
@@ -46,9 +46,8 @@ class OSSService:
         return settings.OSS_BUCKET
 
     def upload_file(self, file_stream: BinaryIO, original_name: str, prefix: str, content_type: str | None = None) -> dict:
-        ext = original_name.rsplit(".", 1)[-1].lower() if "." in original_name else "bin"
-        filename = f"{uuid.uuid4().hex}.{ext}"
-        oss_key = f"{prefix.strip('/')}/{filename}"
+        oss_key = oss_key_for_upload(original_name, prefix)
+        filename = oss_key.rsplit("/", 1)[-1]
 
         # Single streaming pass for hash + size — no full-file memory copy.
         file_stream.seek(0)

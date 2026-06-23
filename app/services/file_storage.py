@@ -4,11 +4,11 @@ Replaces MinIO/OSS for business file storage (MinIO is kept only for Milvus inte
 """
 
 import hashlib
-import uuid
 from pathlib import Path
 from typing import BinaryIO
 
 from app.core.config import settings
+from app.core.utils import oss_key_for_upload
 
 # Streaming chunk — keeps memory flat for large software packages.
 _CHUNK = 8 * 1024 * 1024  # 8 MiB
@@ -39,9 +39,8 @@ class FileStorageService:
         prefix: str,
         content_type: str | None = None,
     ) -> dict:
-        ext = original_name.rsplit(".", 1)[-1].lower() if "." in original_name else "bin"
-        filename = f"{uuid.uuid4().hex}.{ext}"
-        oss_key = f"{prefix.strip('/')}/{filename}"
+        oss_key = oss_key_for_upload(original_name, prefix)
+        filename = oss_key.rsplit("/", 1)[-1]
 
         target = self._ensure_dir(prefix.strip("/"))
         # Stream to disk in chunks, hashing as we go — no full-file memory copy.
