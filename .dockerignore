@@ -1,0 +1,24 @@
+# Local caches and editor noise — keeps the source-code layer small and
+# stable so two builds from the same commit produce identical layer hashes.
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.coverage
+.venv
+venv
+.git
+.gitignore
+.idea
+.vscode
+
+# Tests run in CI, no need to ship them in production images.
+tests
+htmlcov
+
+# Local config files — production reads env vars / K8s secrets.
+.env
+.env.*
+!.env.example
