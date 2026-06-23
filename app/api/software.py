@@ -143,6 +143,7 @@ class UploadInitBody(BaseModel):
     description: str = ""
     content_type: str | None = None
     size: int  # bytes
+    software_id: int | None = None  # 给已有软件加版本时传入
 
 
 class UploadPartResult(BaseModel):
@@ -169,11 +170,19 @@ def _decode_upload_token(token: str) -> dict:
 
 @router.post("/upload/init")
 async def upload_init(body: UploadInitBody, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
-    # 1. 校验 — 与同步上传保持一致，失败时不产生任何 OSS 副作用
-    brands = _valid_values(db, "sw_brand")
-    categories = _valid_values(db, "sw_category")
-    if body.brand not in brands: raise HTTPException(400, "无效品牌")
-    if body.category not in categories: raise HTTPException(400, "无效分类")
+    # 1. 校验 — 失败时不产生任何 OSS 副作用
+    if body.software_id:
+        existing_sw = db.query(Software).filter(Software.id == body.software_id).first()
+        if not existing_sw: raise HTTPException(400, "软件不存在")
+        brand = existing_sw.brand
+        category = existing_sw.category
+    else:
+        brands = _valid_values(db, "sw_brand")
+        categories = _valid_values(db, "sw_category")
+        if body.brand not in brands: raise HTTPException(400, "无效品牌")
+        if body.category not in categories: raise HTTPException(400, "无效分类")
+        brand = body.brand
+        category = body.category
     if not body.filename or _ext(body.filename) not in ALLOWED_EXTS: raise HTTPException(415, "不支持的软件包格式")
     if body.size <= 0: raise HTTPException(400, "文件大小无效")
     if body.size > settings.SOFTWARE_MAX_SIZE_GB * 1024 * 1024 * 1024: raise HTTPException(413, "文件大小超过限制")
@@ -182,20 +191,21 @@ async def upload_init(body: UploadInitBody, db: Session = Depends(get_db), admin
     if storage_service.is_local:
         return ok({"mode": "sync"}, "使用同步上传")
 
-    # 2. 生成 oss_key 与 presigned URL — 使用原始文件名 + 时间戳，便于运维直接辨识
-    oss_key = oss_key_for_upload(body.filename, f"{settings.OSS_SOFTWARE_PREFIX}/{body.brand}")
+    # 2. 生成 oss_key 与 presigned URL — 原始文件名直接在 OSS 中可辨识
+    oss_key = oss_key_for_upload(body.filename, f"{settings.OSS_SOFTWARE_PREFIX}/{brand}")
     part_size = settings.UPLOAD_PART_SIZE_MB * 1024 * 1024
     expire = settings.UPLOAD_PRESIGN_EXPIRE_MINUTES
 
     payload = {
         "oss_key": oss_key,
         "filename": body.filename,
-        "brand": body.brand,
-        "category": body.category,
+        "brand": brand,
+        "category": category,
         "version": body.version,
         "description": body.description,
         "content_type": body.content_type,
         "size": body.size,
+        "software_id": body.software_id,
         "exp": datetime.now(timezone.utc) + timedelta(hours=UPLOAD_TOKEN_EXPIRE_HOURS),
     }
 
@@ -250,6 +260,24 @@ async def upload_complete(body: UploadCompleteBody, db: Session = Depends(get_db
         raise HTTPException(400, "无效的上传凭证")
 
     # 写入 DB — 失败时清理已上传的文件
+    existing_id = claims.get("software_id")
+    if existing_id:
+        sw = db.query(Software).filter(Software.id == existing_id).first()
+        if not sw:
+            await run_in_threadpool(storage_service.delete_file, oss_key)
+            raise HTTPException(400, "软件不存在")
+        try:
+            db.add(SoftwareVersion(software_id=sw.id, version=claims["version"],
+                                   file_size=claims["size"], file_hash=body.file_hash, oss_key=oss_key))
+            sw.latest_version = claims["version"]
+            db.commit()
+            db.refresh(sw)
+        except Exception:
+            db.rollback()
+            await run_in_threadpool(storage_service.delete_file, oss_key)
+            raise
+        return ok(sw.to_dict(include_versions=True), "版本已添加")
+
     sw = Software(filename=oss_key.rsplit("/", 1)[-1], original_name=claims["filename"],
                   brand=claims["brand"], category=claims["category"],
                   latest_version=claims["version"], description=claims.get("description"))
