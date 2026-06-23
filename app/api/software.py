@@ -401,6 +401,37 @@ async def update_software(software_id: int, body: UpdateSoftwareBody, db: Sessio
     return ok(sw.to_dict(), "更新成功")
 
 
+@router.patch("/publish/bulk")
+async def bulk_publish_software(body: "BulkPublishSoftwareBody", db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    q = db.query(Software)
+    if body.ids is not None:
+        if not body.ids:
+            raise HTTPException(400, "请选择要操作的软件")
+        q = q.filter(Software.id.in_(body.ids))
+    else:
+        if body.brand:
+            q = q.filter(Software.brand == body.brand)
+        if body.category:
+            q = q.filter(Software.category == body.category)
+        if body.keyword:
+            q = q.filter(Software.original_name.ilike(f"%{body.keyword}%"))
+    # Only flip rows whose state differs from the target — keeps the operation
+    # idempotent and the response count meaningful.
+    rows = q.filter(Software.is_published == (not body.publish)).all()
+    for sw in rows:
+        sw.is_published = body.publish
+    db.commit()
+    return ok({"count": len(rows), "publish": body.publish}, "发布成功" if body.publish else "取消发布成功")
+
+
+class BulkPublishSoftwareBody(BaseModel):
+    ids: list[int] | None = None
+    brand: str | None = None
+    category: str | None = None
+    keyword: str | None = None
+    publish: bool = True
+
+
 @router.patch("/{software_id}/publish")
 async def toggle_publish(software_id: int, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
     sw = db.query(Software).filter(Software.id == software_id).first()
