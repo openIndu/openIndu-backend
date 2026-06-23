@@ -60,12 +60,18 @@ class SoftwareVersion(Base):
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     software_id = Column(BigInteger, ForeignKey("software.id"), nullable=False, index=True)
     version = Column(String(100), nullable=False)
+    # Per-version display name — each upload preserves its real file name so
+    # the portal can label two versions of the same software differently.
+    original_name = Column(String(500), nullable=True)
     file_size = Column(BigInteger, nullable=True)
     file_hash = Column(String(64), nullable=True, index=True)
     oss_key = Column(String(500), nullable=False, unique=True)
     download_count = Column(Integer, nullable=False, default=0)
     upload_time = Column(DateTime, server_default=func.now(), nullable=False)
     is_active = Column(Boolean, nullable=False, default=True)
+    # Publish per version, not per software — admins curate which versions
+    # are visible to portal users without affecting other versions.
+    is_published = Column(Boolean, nullable=False, default=False)
 
     software = relationship("Software", back_populates="versions")
 
@@ -74,10 +80,12 @@ class SoftwareVersion(Base):
             "id": self.id,
             "software_id": self.software_id,
             "version": self.version,
+            "original_name": self.original_name,
             "file_size": self.file_size,
             "file_hash": self.file_hash,
             "oss_key": self.oss_key,
             "download_count": self.download_count,
             "upload_time": self.upload_time.isoformat() if self.upload_time else None,
             "is_active": self.is_active,
+            "is_published": self.is_published,
         }
