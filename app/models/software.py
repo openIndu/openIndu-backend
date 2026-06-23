@@ -42,6 +42,7 @@ class Software(Base):
             "series": self.series,
             "latest_version": self.latest_version,
             "latest_version_size": latest_size,
+            "versions_count": len(self.versions),
             "download_count": self.download_count,
             "description": self.description,
             "is_active": self.is_active,

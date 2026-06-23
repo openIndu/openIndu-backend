@@ -1,4 +1,39 @@
 """Shared utility helpers."""
+import re
+from datetime import datetime, timezone
+
+# Characters allowed in OSS object names: letters/digits/CJK/dot/dash/underscore/space.
+# Everything else (path separators, control chars, &, ?, #, …) is stripped so
+# the resulting key is safe to embed in URLs without re-encoding traps.
+_SAFE_NAME_RE = re.compile(r"[^\w.\- 一-鿿]")
+
+
+def _sanitize_filename(name: str) -> str:
+    """Strip dangerous characters and collapse whitespace.
+
+    Empty result after sanitising (e.g. caller passed ``///``) returns
+    ``"file"`` so the caller still has a non-empty key segment.
+    """
+    cleaned = _SAFE_NAME_RE.sub("", name).strip().strip(".")
+    return cleaned or "file"
+
+
+def oss_key_for_upload(original_name: str, prefix: str) -> str:
+    """Build a human-readable OSS object key.
+
+    Format: ``{prefix}/{sanitized_stem}_{utc-yyyymmdd-hhmmss}.{ext}`` — the
+    timestamp suffix dedupes re-uploads of the same file name so two users
+    cannot silently overwrite each other.
+    """
+    if "." in original_name:
+        stem, ext = original_name.rsplit(".", 1)
+        ext = ext.lower()
+    else:
+        stem, ext = original_name, "bin"
+    safe_stem = _sanitize_filename(stem)
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    filename = f"{safe_stem}_{ts}.{ext}"
+    return f"{prefix.strip('/')}/{filename}"
 
 
 def mask_phone(phone: str | None) -> str | None:

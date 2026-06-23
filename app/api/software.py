@@ -1,6 +1,5 @@
 """Software package and version API."""
 import math
-import uuid
 from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
@@ -11,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.dependencies import get_db, require_admin, require_member
-from app.core.utils import ok
+from app.core.utils import ok, oss_key_for_upload
 from app.models.download_log import DownloadLog
 from app.models.resource_tag import ResourceTag
 from app.models.software import Software, SoftwareVersion
@@ -154,9 +153,8 @@ async def upload_init(body: UploadInitBody, db: Session = Depends(get_db), admin
     if storage_service.is_local:
         return ok({"mode": "sync"}, "使用同步上传")
 
-    # 2. 生成 oss_key 与 presigned URL
-    ext = body.filename.rsplit(".", 1)[-1].lower() if "." in body.filename else "bin"
-    oss_key = f"{settings.OSS_SOFTWARE_PREFIX}/{body.brand}/{uuid.uuid4().hex}.{ext}"
+    # 2. 生成 oss_key 与 presigned URL — 使用原始文件名 + 时间戳，便于运维直接辨识
+    oss_key = oss_key_for_upload(body.filename, f"{settings.OSS_SOFTWARE_PREFIX}/{body.brand}")
     part_size = settings.UPLOAD_PART_SIZE_MB * 1024 * 1024
     expire = settings.UPLOAD_PRESIGN_EXPIRE_MINUTES
 
