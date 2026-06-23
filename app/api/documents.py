@@ -3,6 +3,7 @@ import logging
 from datetime import date, datetime
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -37,6 +38,18 @@ def _validate_doc_series(db: Session, brand: str, category: str, series: str | N
     ).first()
     if not exists:
         raise HTTPException(400, "无效系列")
+
+
+def _file_size(file: UploadFile) -> int:
+    """Return upload size without loading the file into memory."""
+    if file.size is not None:
+        return file.size
+    stream = file.file
+    pos = stream.tell()
+    stream.seek(0, 2)
+    size = stream.tell()
+    stream.seek(pos)
+    return size
 
 
 def _sync_uploaded_document(doc_id: int):
@@ -104,12 +117,11 @@ async def upload_document(file: UploadFile = File(...), brand: str = Form(...), 
     _validate_doc_series(db, brand, category, series or None)
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(415, "仅支持 PDF 文件")
-    content = await file.read()
-    if len(content) > settings.DOCUMENT_MAX_SIZE_MB * 1024 * 1024:
+    if _file_size(file) > settings.DOCUMENT_MAX_SIZE_MB * 1024 * 1024:
         raise HTTPException(413, "文件大小超过限制")
 
-    # 2. 先上传文件到存储
-    meta = storage_service.upload_file(content, file.filename, f"{settings.OSS_DOC_PREFIX}/{brand}", file.content_type or "application/pdf")
+    # 2. 先上传文件到存储 — 流式 + 线程池卸载，避免阻塞事件循环
+    meta = await run_in_threadpool(storage_service.upload_file, file.file, file.filename, f"{settings.OSS_DOC_PREFIX}/{brand}", file.content_type or "application/pdf")
 
     # 3. 然后写入 DB — DB 失败时删除已上传的文件
     doc = Document(filename=meta["filename"], original_name=file.filename, brand=brand, category=category, series=series or None, file_size=meta["file_size"], file_hash=meta["file_hash"], oss_key=meta["oss_key"], description=description)
@@ -119,7 +131,7 @@ async def upload_document(file: UploadFile = File(...), brand: str = Form(...), 
         db.refresh(doc)
     except Exception:
         # 回滚：删除已存在的文件，避免出现 OSS 上的幽灵文件
-        storage_service.delete_file(meta["oss_key"])
+        await run_in_threadpool(storage_service.delete_file, meta["oss_key"])
         raise
 
     return ok(doc.to_dict(), "上传成功")

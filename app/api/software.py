@@ -1,7 +1,11 @@
 """Software package and version API."""
-from datetime import date, datetime
+import math
+import uuid
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi.concurrency import run_in_threadpool
+from jose import JWTError, jwt
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -31,6 +35,18 @@ def _valid_values(db: Session, tag_type: str) -> list[str]:
     return [t.value for t in db.query(ResourceTag).filter(ResourceTag.type == tag_type, ResourceTag.is_active == True).all()]  # noqa: E712
 
 
+def _file_size(file: UploadFile) -> int:
+    """Return upload size without loading the file into memory."""
+    if file.size is not None:
+        return file.size
+    stream = file.file
+    pos = stream.tell()
+    stream.seek(0, 2)
+    size = stream.tell()
+    stream.seek(pos)
+    return size
+
+
 def _check_daily_limit(db: Session, user: User):
     today_start = datetime.combine(date.today(), datetime.min.time())
     count = db.query(DownloadLog).filter(DownloadLog.user_id == user.id, DownloadLog.resource_type == "software", DownloadLog.created_at >= today_start).count()
@@ -58,11 +74,10 @@ async def upload_software(file: UploadFile = File(...), brand: str = Form(...), 
     if brand not in brands: raise HTTPException(400, "无效品牌")
     if category not in categories: raise HTTPException(400, "无效分类")
     if not file.filename or _ext(file.filename) not in ALLOWED_EXTS: raise HTTPException(415, "不支持的软件包格式")
-    content = await file.read()
-    if len(content) > settings.SOFTWARE_MAX_SIZE_GB * 1024 * 1024 * 1024: raise HTTPException(413, "文件大小超过限制")
+    if _file_size(file) > settings.SOFTWARE_MAX_SIZE_GB * 1024 * 1024 * 1024: raise HTTPException(413, "文件大小超过限制")
 
-    # 2. 先上传文件到存储
-    meta = storage_service.upload_file(content, file.filename, f"{settings.OSS_SOFTWARE_PREFIX}/{brand}", file.content_type or "application/octet-stream")
+    # 2. 先上传文件到存储 — 流式 + 线程池卸载，避免阻塞事件循环
+    meta = await run_in_threadpool(storage_service.upload_file, file.file, file.filename, f"{settings.OSS_SOFTWARE_PREFIX}/{brand}", file.content_type or "application/octet-stream")
 
     # 3. 然后写入 DB（两条记录）— DB 失败时删除已上传的文件
     sw = Software(filename=meta["filename"], original_name=file.filename, brand=brand, category=category, latest_version=version, description=description)
@@ -74,10 +89,168 @@ async def upload_software(file: UploadFile = File(...), brand: str = Form(...), 
         db.refresh(sw)
     except Exception:
         # 回滚：删除已存在的文件，避免出现 OSS 上的幽灵文件
-        storage_service.delete_file(meta["oss_key"])
+        await run_in_threadpool(storage_service.delete_file, meta["oss_key"])
         raise
 
     return ok(sw.to_dict(include_versions=True), "上传成功")
+
+
+# ---------------------------------------------------------------------------
+# Direct-to-OSS upload (large software packages, several GB)
+#
+# Browser uploads the file body straight to OSS via presigned URLs, bypassing
+# the backend entirely. The backend only signs the upload and records metadata
+# afterwards — no large body passes through FastAPI/nginx, so there is no
+# event-loop blocking, no memory pressure, and no nginx body/timeout limits.
+# ---------------------------------------------------------------------------
+
+UPLOAD_TOKEN_EXPIRE_HOURS = 2
+
+
+class UploadInitBody(BaseModel):
+    filename: str
+    brand: str
+    category: str
+    version: str
+    description: str = ""
+    content_type: str | None = None
+    size: int  # bytes
+
+
+class UploadPartResult(BaseModel):
+    part_number: int
+    etag: str
+
+
+class UploadCompleteBody(BaseModel):
+    token: str
+    parts: list[UploadPartResult] | None = None
+    file_hash: str | None = None
+
+
+class UploadAbortBody(BaseModel):
+    token: str
+
+
+def _decode_upload_token(token: str) -> dict:
+    try:
+        return jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+    except JWTError as exc:
+        raise HTTPException(400, f"无效或过期的上传凭证: {exc}")
+
+
+@router.post("/upload/init")
+async def upload_init(body: UploadInitBody, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    # 1. 校验 — 与同步上传保持一致，失败时不产生任何 OSS 副作用
+    brands = _valid_values(db, "sw_brand")
+    categories = _valid_values(db, "sw_category")
+    if body.brand not in brands: raise HTTPException(400, "无效品牌")
+    if body.category not in categories: raise HTTPException(400, "无效分类")
+    if not body.filename or _ext(body.filename) not in ALLOWED_EXTS: raise HTTPException(415, "不支持的软件包格式")
+    if body.size <= 0: raise HTTPException(400, "文件大小无效")
+    if body.size > settings.SOFTWARE_MAX_SIZE_GB * 1024 * 1024 * 1024: raise HTTPException(413, "文件大小超过限制")
+
+    # 本地存储后端没有 OSS 直传能力 — 回退到同步上传
+    if storage_service.is_local:
+        return ok({"mode": "sync"}, "使用同步上传")
+
+    # 2. 生成 oss_key 与 presigned URL
+    ext = body.filename.rsplit(".", 1)[-1].lower() if "." in body.filename else "bin"
+    oss_key = f"{settings.OSS_SOFTWARE_PREFIX}/{body.brand}/{uuid.uuid4().hex}.{ext}"
+    part_size = settings.UPLOAD_PART_SIZE_MB * 1024 * 1024
+    expire = settings.UPLOAD_PRESIGN_EXPIRE_MINUTES
+
+    payload = {
+        "oss_key": oss_key,
+        "filename": body.filename,
+        "brand": body.brand,
+        "category": body.category,
+        "version": body.version,
+        "description": body.description,
+        "content_type": body.content_type,
+        "size": body.size,
+        "exp": datetime.now(timezone.utc) + timedelta(hours=UPLOAD_TOKEN_EXPIRE_HOURS),
+    }
+
+    if body.size > part_size:
+        # multipart
+        upload_id = await run_in_threadpool(storage_service._impl.create_multipart_upload, oss_key, body.content_type)
+        num_parts = math.ceil(body.size / part_size)
+        part_urls = [
+            await run_in_threadpool(storage_service._impl.presign_part_upload, oss_key, upload_id, i + 1, expire)
+            for i in range(num_parts)
+        ]
+        payload["mode"] = "multipart"
+        payload["upload_id"] = upload_id
+        token = jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
+        return ok({
+            "mode": "multipart", "token": token, "oss_key": oss_key,
+            "part_size": part_size, "part_urls": part_urls,
+            "expires_in": expire * 60,
+        }, "凭证已签发")
+
+    # single PUT
+    upload_url = await run_in_threadpool(storage_service._impl.presign_single_put, oss_key, body.content_type, expire)
+    payload["mode"] = "single"
+    token = jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
+    return ok({
+        "mode": "single", "token": token, "oss_key": oss_key,
+        "upload_url": upload_url, "expires_in": expire * 60,
+    }, "凭证已签发")
+
+
+@router.post("/upload/complete")
+async def upload_complete(body: UploadCompleteBody, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    claims = _decode_upload_token(body.token)
+    mode = claims.get("mode")
+    oss_key = claims["oss_key"]
+
+    if mode == "multipart":
+        upload_id = claims["upload_id"]
+        if not body.parts:
+            raise HTTPException(400, "缺少分片信息")
+        parts = [{"PartNumber": p.part_number, "ETag": p.etag} for p in sorted(body.parts, key=lambda x: x.part_number)]
+        try:
+            await run_in_threadpool(storage_service._impl.complete_multipart_upload, oss_key, upload_id, parts)
+        except Exception:
+            await run_in_threadpool(storage_service._impl.abort_multipart_upload, oss_key, upload_id)
+            raise HTTPException(500, "合并分片失败，已取消上传")
+    elif mode == "single":
+        exists = await run_in_threadpool(storage_service._impl.head_object, oss_key)
+        if not exists:
+            raise HTTPException(400, "文件未上传至 OSS")
+    else:
+        raise HTTPException(400, "无效的上传凭证")
+
+    # 写入 DB — 失败时清理已上传的文件
+    sw = Software(filename=oss_key.rsplit("/", 1)[-1], original_name=claims["filename"],
+                  brand=claims["brand"], category=claims["category"],
+                  latest_version=claims["version"], description=claims.get("description"))
+    try:
+        db.add(sw)
+        db.flush()
+        db.add(SoftwareVersion(software_id=sw.id, version=claims["version"],
+                               file_size=claims["size"], file_hash=body.file_hash, oss_key=oss_key))
+        db.commit()
+        db.refresh(sw)
+    except Exception:
+        db.rollback()
+        await run_in_threadpool(storage_service.delete_file, oss_key)
+        raise
+
+    return ok(sw.to_dict(include_versions=True), "上传成功")
+
+
+@router.post("/upload/abort")
+async def upload_abort(body: UploadAbortBody, admin: User = Depends(require_admin)):
+    claims = _decode_upload_token(body.token)
+    mode = claims.get("mode")
+    oss_key = claims["oss_key"]
+    if mode == "multipart":
+        await run_in_threadpool(storage_service._impl.abort_multipart_upload, oss_key, claims["upload_id"])
+    elif mode == "single":
+        await run_in_threadpool(storage_service.delete_file, oss_key)
+    return ok(message="已取消")
 
 
 @router.get("/brands/list")
@@ -129,7 +302,7 @@ async def add_version(software_id: int, file: UploadFile = File(...), version: s
     sw = db.query(Software).filter(Software.id == software_id).first()
     if not sw: raise HTTPException(404, "软件不存在")
     if not file.filename or _ext(file.filename) not in ALLOWED_EXTS: raise HTTPException(415, "不支持的软件包格式")
-    content = await file.read(); meta = storage_service.upload_file(content, file.filename, f"{settings.OSS_SOFTWARE_PREFIX}/{sw.brand}", file.content_type)
+    meta = await run_in_threadpool(storage_service.upload_file, file.file, file.filename, f"{settings.OSS_SOFTWARE_PREFIX}/{sw.brand}", file.content_type)
     ver = SoftwareVersion(software_id=sw.id, version=version, file_size=meta["file_size"], file_hash=meta["file_hash"], oss_key=meta["oss_key"])
     sw.latest_version = version
     db.add(ver); db.commit(); db.refresh(ver)

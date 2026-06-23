@@ -1,5 +1,6 @@
 """Unit tests for local FileStorageService — upload, download, delete, list."""
 import hashlib
+import io
 import os
 import tempfile
 from pathlib import Path
@@ -24,7 +25,7 @@ class TestFileStorageService:
     def test_upload_file(self):
         """Upload should write file to disk and return metadata."""
         content = b"Hello, openIndu!"
-        result = self.storage.upload_file(content, "test.pdf", "documents/siemens")
+        result = self.storage.upload_file(io.BytesIO(content), "test.pdf", "documents/siemens")
 
         assert result["oss_key"].startswith("documents/siemens/")
         assert result["oss_key"].endswith(".pdf")
@@ -39,14 +40,14 @@ class TestFileStorageService:
     def test_upload_file_no_extension(self):
         """Upload with no extension should default to .bin."""
         content = b"binary data"
-        result = self.storage.upload_file(content, "noext", "data")
+        result = self.storage.upload_file(io.BytesIO(content), "noext", "data")
 
         assert result["oss_key"].endswith(".bin")
 
     def test_upload_file_preserves_prefix_structure(self):
         """Upload should create nested directories for prefix."""
         content = b"test"
-        result = self.storage.upload_file(content, "manual.pdf", "documents/siemens/s7-1200")
+        result = self.storage.upload_file(io.BytesIO(content), "manual.pdf", "documents/siemens/s7-1200")
 
         assert "documents/siemens/s7-1200/" in result["oss_key"]
         assert (self.root / result["oss_key"]).exists()
@@ -54,7 +55,7 @@ class TestFileStorageService:
     def test_delete_file(self):
         """Delete should remove file from disk."""
         content = b"temporary content"
-        result = self.storage.upload_file(content, "temp.pdf", "tmp")
+        result = self.storage.upload_file(io.BytesIO(content), "temp.pdf", "tmp")
         oss_key = result["oss_key"]
 
         assert (self.root / oss_key).exists()
@@ -69,7 +70,7 @@ class TestFileStorageService:
     def test_get_file_path(self):
         """get_file_path should return the full path to an existing file."""
         content = b"path test"
-        result = self.storage.upload_file(content, "test.pdf", "uploads")
+        result = self.storage.upload_file(io.BytesIO(content), "test.pdf", "uploads")
         oss_key = result["oss_key"]
 
         path = self.storage.get_file_path(oss_key)
@@ -84,9 +85,9 @@ class TestFileStorageService:
 
     def test_list_objects(self):
         """list_objects should return all files under a prefix."""
-        self.storage.upload_file(b"file1", "a.pdf", "prefix")
-        self.storage.upload_file(b"file2", "b.pdf", "prefix")
-        self.storage.upload_file(b"file3", "c.pdf", "other")
+        self.storage.upload_file(io.BytesIO(b"file1"), "a.pdf", "prefix")
+        self.storage.upload_file(io.BytesIO(b"file2"), "b.pdf", "prefix")
+        self.storage.upload_file(io.BytesIO(b"file3"), "c.pdf", "other")
 
         result = self.storage.list_objects("prefix")
         assert len(result) == 2

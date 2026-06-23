@@ -51,6 +51,14 @@ class Settings(BaseSettings):
     SOFTWARE_MAX_SIZE_GB: int = 5
     RAG_SYNC_INTERVAL_MINUTES: int = 60
 
+    # --- Direct-to-OSS multipart upload (large software packages) ---
+    # Part size for multipart uploads. Must be ≥ 5 MiB (S3/OSS minimum).
+    # 32 MiB → a 5 GiB package is ~160 parts.
+    UPLOAD_PART_SIZE_MB: int = 32
+    # How long presigned PUT URLs stay valid. Large uploads take time, so
+    # default to 2 hours.
+    UPLOAD_PRESIGN_EXPIRE_MINUTES: int = 120
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", case_sensitive=True)
 
 

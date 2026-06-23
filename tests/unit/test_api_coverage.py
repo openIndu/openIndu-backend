@@ -1,5 +1,6 @@
 """Focused API/helper coverage for coverage gate."""
 import asyncio
+import io
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -79,6 +80,8 @@ def test_documents_list_upload_get(monkeypatch):
     monkeypatch.setattr(documents.storage_service, "upload_file", lambda c, n, p, t: {"oss_key": "docs/x.pdf", "filename": "x.pdf", "file_size": 100, "file_hash": "abc"})
     file = MagicMock()
     file.filename = "test.pdf"
+    file.size = 100
+    file.content_type = "application/pdf"
 
     async def read():
         return b"%PDF"
@@ -186,6 +189,8 @@ def test_software_list_upload_get_add_delete(monkeypatch):
     monkeypatch.setattr(software.storage_service, "upload_file", lambda c, n, p, t: {"oss_key": "software/x.zip", "filename": "x.zip", "file_size": 100, "file_hash": "abc"})
     file = MagicMock()
     file.filename = "test.zip"
+    file.size = 100
+    file.content_type = "application/octet-stream"
 
     async def read():
         return b"PK"
@@ -373,7 +378,7 @@ def test_file_storage_service(monkeypatch, tmp_path):
 
     monkeypatch.setattr("app.services.file_storage.settings", SimpleNamespace(DATA_DIR=str(tmp_path)))
     service = FileStorageService()
-    result = service.upload_file(b"test content", "file.txt", "test-prefix")
+    result = service.upload_file(io.BytesIO(b"test content"), "file.txt", "test-prefix")
     assert result["file_size"] == len(b"test content")
     assert len(service.list_objects("test-prefix")) == 1
     path = service.get_file_path(result["oss_key"])
@@ -555,3 +560,115 @@ def test_models():
     from app.models import document
     from app.models import software
     assert True
+
+
+def _direct_upload_token(claims_extra: dict) -> str:
+    from jose import jwt
+    from app.core.config import settings
+    claims = {"oss_key": "software/siemens/abc.zip", "filename": "t.zip", "brand": "siemens",
+              "category": "utility", "version": "1.0", "description": "",
+              "content_type": "application/zip", "size": 100}
+    claims.update(claims_extra)
+    return jwt.encode(claims, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
+
+
+def test_software_direct_upload_init_local(monkeypatch):
+    from app.api import software
+    monkeypatch.setattr(software.storage_service, "_backend", "local")
+    db = MagicMock()
+    db.query.side_effect = [_chain(items=[SimpleNamespace(value="siemens")]),
+                            _chain(items=[SimpleNamespace(value="utility")])]
+    body = software.UploadInitBody(filename="t.zip", brand="siemens", category="utility",
+                                   version="1.0", size=100)
+    result = asyncio.run(software.upload_init(body, db=db, admin=_user()))
+    assert result["data"]["mode"] == "sync"
+
+
+def test_software_direct_upload_init_multipart(monkeypatch):
+    from app.api import software
+    from app.services import oss_service as oss_mod
+    monkeypatch.setattr(software.storage_service, "_backend", "s3")
+    monkeypatch.setattr(oss_mod.oss_service, "create_multipart_upload", lambda *a, **k: "uid-1")
+    monkeypatch.setattr(oss_mod.oss_service, "presign_part_upload",
+                        lambda key, uid, pn, exp: f"https://oss/part{pn}")
+    db = MagicMock()
+    db.query.side_effect = [_chain(items=[SimpleNamespace(value="siemens")]),
+                            _chain(items=[SimpleNamespace(value="utility")])]
+    body = software.UploadInitBody(filename="t.zip", brand="siemens", category="utility",
+                                   version="1.0", content_type="application/zip",
+                                   size=software.settings.UPLOAD_PART_SIZE_MB * 1024 * 1024 + 1)
+    result = asyncio.run(software.upload_init(body, db=db, admin=_user()))
+    data = result["data"]
+    assert data["mode"] == "multipart"
+    assert len(data["part_urls"]) == 2
+    assert data["part_urls"][1] == "https://oss/part2"
+    from jose import jwt
+    from app.core.config import settings
+    claims = jwt.decode(data["token"], settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+    assert claims["mode"] == "multipart"
+    assert claims["upload_id"] == "uid-1"
+    assert claims["size"] == body.size
+
+
+def test_software_direct_upload_init_single(monkeypatch):
+    from app.api import software
+    from app.services import oss_service as oss_mod
+    monkeypatch.setattr(software.storage_service, "_backend", "s3")
+    monkeypatch.setattr(oss_mod.oss_service, "presign_single_put", lambda *a, **k: "https://oss/single")
+    db = MagicMock()
+    db.query.side_effect = [_chain(items=[SimpleNamespace(value="siemens")]),
+                            _chain(items=[SimpleNamespace(value="utility")])]
+    body = software.UploadInitBody(filename="t.zip", brand="siemens", category="utility",
+                                   version="1.0", size=1024)
+    data = asyncio.run(software.upload_init(body, db=db, admin=_user()))["data"]
+    assert data["mode"] == "single"
+    assert data["upload_url"] == "https://oss/single"
+
+
+def test_software_direct_upload_complete_multipart(monkeypatch):
+    from app.api import software
+    from app.services import oss_service as oss_mod
+    monkeypatch.setattr(oss_mod.oss_service, "complete_multipart_upload", lambda *a, **k: None)
+    token = _direct_upload_token({"mode": "multipart", "upload_id": "uid-1"})
+    db = MagicMock()
+    db.flush = lambda: None
+    parts = [software.UploadPartResult(part_number=2, etag="B"), software.UploadPartResult(part_number=1, etag="A")]
+    body = software.UploadCompleteBody(token=token, parts=parts)
+    result = asyncio.run(software.upload_complete(body, db=db, admin=_user()))
+    assert result["message"] == "上传成功"
+
+
+def test_software_direct_upload_complete_single(monkeypatch):
+    from app.api import software
+    from app.services import oss_service as oss_mod
+    monkeypatch.setattr(oss_mod.oss_service, "head_object", lambda *a, **k: True)
+    token = _direct_upload_token({"mode": "single"})
+    db = MagicMock()
+    db.flush = lambda: None
+    body = software.UploadCompleteBody(token=token)
+    assert asyncio.run(software.upload_complete(body, db=db, admin=_user()))["message"] == "上传成功"
+
+
+def test_software_direct_upload_complete_single_missing(monkeypatch):
+    from app.api import software
+    from app.services import oss_service as oss_mod
+    monkeypatch.setattr(oss_mod.oss_service, "head_object", lambda *a, **k: False)
+    token = _direct_upload_token({"mode": "single"})
+    with pytest.raises(HTTPException):
+        asyncio.run(software.upload_complete(software.UploadCompleteBody(token=token), db=MagicMock(), admin=_user()))
+
+
+def test_software_direct_upload_abort(monkeypatch):
+    from app.api import software
+    from app.services import oss_service as oss_mod
+    called = {}
+    monkeypatch.setattr(oss_mod.oss_service, "abort_multipart_upload", lambda *a, **k: called.setdefault("aborted", True))
+    token = _direct_upload_token({"mode": "multipart", "upload_id": "uid-1"})
+    asyncio.run(software.upload_abort(software.UploadAbortBody(token=token), admin=_user()))
+    assert called.get("aborted") is True
+
+
+def test_software_direct_upload_bad_token():
+    from app.api import software
+    with pytest.raises(HTTPException):
+        asyncio.run(software.upload_complete(software.UploadCompleteBody(token="bad"), db=MagicMock(), admin=_user()))
