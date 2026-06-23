@@ -77,14 +77,23 @@ class OSSService:
     def delete_file(self, oss_key: str) -> None:
         self.client.delete_object(Bucket=self.bucket, Key=oss_key)
 
-    def generate_presigned_url(self, oss_key: str, expiration_minutes: int = 5) -> str:
+    def generate_presigned_url(self, oss_key: str, expiration_minutes: int = 5,
+                                inline: bool = False) -> str:
+        """Generate a presigned GET URL.
+
+        When inline=True the URL forces inline disposition + a PDF content type
+        so browsers render it in the built-in PDF viewer instead of downloading.
+        Default (False) keeps the attachment behavior for the download button.
+        """
+        params = {"Bucket": self.bucket, "Key": oss_key}
+        if inline:
+            params["ResponseContentDisposition"] = "inline"
+            params["ResponseContentType"] = "application/pdf"
+        else:
+            params["ResponseContentDisposition"] = "attachment"
         return self.client.generate_presigned_url(
             "get_object",
-            Params={
-                "Bucket": self.bucket,
-                "Key": oss_key,
-                "ResponseContentDisposition": "attachment",
-            },
+            Params=params,
             ExpiresIn=expiration_minutes * 60,
         )
 
