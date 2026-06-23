@@ -56,6 +56,7 @@ async def list_software(brand: str | None = None, category: str | None = None, s
 
 @router.post("/upload")
 async def upload_software(file: UploadFile = File(...), brand: str = Form(...), category: str = Form(...), series: str = Form(""), version: str = Form(...), description: str = Form(""), db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    # 1. 所有前置校验 — 失败时不产生副作用
     brands = _valid_values(db, "sw_brand")
     categories = _valid_values(db, "sw_category")
     if brand not in brands: raise HTTPException(400, "无效品牌")
@@ -63,11 +64,23 @@ async def upload_software(file: UploadFile = File(...), brand: str = Form(...), 
     if not file.filename or _ext(file.filename) not in ALLOWED_EXTS: raise HTTPException(415, "不支持的软件包格式")
     content = await file.read()
     if len(content) > settings.SOFTWARE_MAX_SIZE_GB * 1024 * 1024 * 1024: raise HTTPException(413, "文件大小超过限制")
-    meta = storage_service.upload_file(content, file.filename, f"{settings.OSS_SOFTWARE_PREFIX}/{brand}", file.content_type)
+
+    # 2. 先上传文件到存储
+    meta = storage_service.upload_file(content, file.filename, f"{settings.OSS_SOFTWARE_PREFIX}/{brand}", file.content_type or "application/octet-stream")
+
+    # 3. 然后写入 DB（两条记录）— DB 失败时删除已上传的文件
     sw = Software(filename=meta["filename"], original_name=file.filename, brand=brand, category=category, series=series or None, latest_version=version, description=description)
-    db.add(sw); db.flush()
-    db.add(SoftwareVersion(software_id=sw.id, version=version, file_size=meta["file_size"], file_hash=meta["file_hash"], oss_key=meta["oss_key"]))
-    db.commit(); db.refresh(sw)
+    try:
+        db.add(sw)
+        db.flush()
+        db.add(SoftwareVersion(software_id=sw.id, version=version, file_size=meta["file_size"], file_hash=meta["file_hash"], oss_key=meta["oss_key"]))
+        db.commit()
+        db.refresh(sw)
+    except Exception:
+        # 回滚：删除已存在的文件，避免出现 OSS 上的幽灵文件
+        storage_service.delete_file(meta["oss_key"])
+        raise
+
     return ok(sw.to_dict(include_versions=True), "上传成功")
 
 

@@ -97,6 +97,7 @@ async def list_documents(brand: str | None = None, category: str | None = None, 
 
 @router.post("/upload")
 async def upload_document(file: UploadFile = File(...), brand: str = Form(...), category: str = Form(...), series: str = Form(""), description: str = Form(""), db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    # 1. 所有前置校验 — 失败时不产生副作用
     brands = _valid_values(db, "doc_brand")
     categories = _valid_values(db, "doc_category")
     if brand not in brands:
@@ -109,11 +110,21 @@ async def upload_document(file: UploadFile = File(...), brand: str = Form(...), 
     content = await file.read()
     if len(content) > settings.DOCUMENT_MAX_SIZE_MB * 1024 * 1024:
         raise HTTPException(413, "文件大小超过限制")
+
+    # 2. 先上传文件到存储
     meta = storage_service.upload_file(content, file.filename, f"{settings.OSS_DOC_PREFIX}/{brand}", file.content_type or "application/pdf")
+
+    # 3. 然后写入 DB — DB 失败时删除已上传的文件
     doc = Document(filename=meta["filename"], original_name=file.filename, brand=brand, category=category, series=series or None, file_size=meta["file_size"], file_hash=meta["file_hash"], oss_key=meta["oss_key"], description=description)
-    db.add(doc)
-    db.commit()
-    db.refresh(doc)
+    try:
+        db.add(doc)
+        db.commit()
+        db.refresh(doc)
+    except Exception:
+        # 回滚：删除已存在的文件，避免出现 OSS 上的幽灵文件
+        storage_service.delete_file(meta["oss_key"])
+        raise
+
     return ok(doc.to_dict(), "上传成功")
 
 
