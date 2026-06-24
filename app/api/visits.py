@@ -14,8 +14,8 @@ router = APIRouter(prefix="/visits")
 
 
 def client_ip(request: Request) -> str:
-    forwarded = request.headers.get("x-forwarded-for")
-    return forwarded.split(",")[0].strip() if forwarded else (request.client.host if request.client else "unknown")
+    from app.core.utils import real_client_ip
+    return real_client_ip(request) or "unknown"
 
 
 class VisitBody(BaseModel):

@@ -26,8 +26,8 @@ def _ext(filename: str) -> str:
 
 
 def _ip(request: Request):
-    forwarded = request.headers.get("x-forwarded-for")
-    return forwarded.split(",")[0].strip() if forwarded else (request.client.host if request.client else None)
+    from app.core.utils import real_client_ip
+    return real_client_ip(request)
 
 
 def _valid_values(db: Session, tag_type: str) -> list[str]:

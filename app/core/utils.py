@@ -49,3 +49,59 @@ def ok(data=None, message: str = "操作成功"):
     breaking array consumers on the frontend (``.filter is not a function``).
     """
     return {"code": 200, "message": message, "data": data if data is not None else {}}
+
+
+# ---------------------------------------------------------------------------
+# Real client IP resolution
+#
+# Behind one or more reverse proxies (K8s Ingress, nginx, an SLB), the TCP
+# peer is the last proxy, not the user. Real IP travels in HTTP headers —
+# *if* every hop is configured to set/append it. Header preference, in order:
+#
+#   1. ``X-Forwarded-For``  — historical standard. May be a comma-separated
+#      chain like ``client, proxy1, proxy2``; the **leftmost public address**
+#      is the client. We walk left→right and skip private/loopback hops so
+#      a misbehaving inner proxy doesn't pollute the answer. Falls back to
+#      the leftmost token if every entry is private (single-hop docker dev).
+#   2. ``X-Real-IP``        — what nginx-ingress sets by default; many setups
+#      have this and not XFF. Honoured as a fallback so we don't lose the
+#      real IP just because the front door uses one convention over the other.
+#   3. ``request.client.host`` — TCP peer. With Uvicorn's --proxy-headers,
+#      this already reflects the parsed XFF when one is present, so this
+#      branch is the last-resort path (containerised dev without a proxy).
+#
+# Returns ``None`` only if the request has no client at all (extremely rare
+# in tests). Callers wanting a string sentinel should ``... or "unknown"``.
+# ---------------------------------------------------------------------------
+
+import ipaddress as _ipaddress
+from typing import Any as _Any  # avoid a forward-import of FastAPI's Request
+
+
+def _is_private(addr: str) -> bool:
+    """True for loopback / RFC1918 / link-local / unique-local — i.e. not a
+    real client address. Returns True on parse failures so a bogus entry is
+    also skipped during XFF walking."""
+    try:
+        ip = _ipaddress.ip_address(addr)
+    except ValueError:
+        return True
+    return ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved
+
+
+def real_client_ip(request: _Any) -> str | None:
+    """Best-effort real-IP extraction from request headers / TCP peer."""
+    xff = request.headers.get("x-forwarded-for")
+    if xff:
+        candidates = [p.strip() for p in xff.split(",") if p.strip()]
+        for cand in candidates:
+            if not _is_private(cand):
+                return cand
+        if candidates:
+            return candidates[0]
+    real = request.headers.get("x-real-ip")
+    if real:
+        real = real.strip()
+        if real:
+            return real
+    return request.client.host if request.client else None
