@@ -1,10 +1,11 @@
 """Synchronization task API."""
 import logging
 
-from fastapi import APIRouter, BackgroundTasks, Body, Depends, Query
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.database import SessionLocal
 from app.core.dependencies import get_db, require_admin, require_auth
 from app.core.utils import ok
@@ -37,6 +38,11 @@ async def trigger_sync(
     body: TriggerBody = Body(default=TriggerBody()),
     admin: User = Depends(require_admin),
 ):
+    # See documents.py sync endpoint: when RAG sync is off this backend must
+    # not run BGE-M3 embedding, so the manual full-library trigger is rejected
+    # too. Syncs are produced offline and the vectors pushed to Milvus.
+    if not settings.RAG_SYNC_ENABLED:
+        raise HTTPException(503, "本环境已关闭 RAG 同步（RAG_SYNC_ENABLED=false），请在离线环境同步后导入向量")
     background_tasks.add_task(_run_sync_background, body.mode)
     return ok({"mode": body.mode, "status": "queued"}, "同步已在后台启动")
 
@@ -49,7 +55,9 @@ async def sync_status(db: Session = Depends(get_db), user: User = Depends(requir
         key = status or "pending"
         stats[key] = stats.get(key, 0) + 1
     pending_count = stats.get("pending", 0) + stats.get("failed", 0)
-    return ok({"documents": stats, "pending_count": pending_count})
+    # Surface the flag so the admin UI can disable its sync buttons instead of
+    # letting the click fail with a 503 — one fewer round-trip, clearer UX.
+    return ok({"documents": stats, "pending_count": pending_count, "rag_sync_enabled": settings.RAG_SYNC_ENABLED})
 
 
 @router.get("/logs")
