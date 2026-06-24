@@ -115,8 +115,8 @@ def _sync_uploaded_document(doc_id: int):
 
 
 def client_ip(request: Request) -> str | None:
-    forwarded = request.headers.get("x-forwarded-for")
-    return forwarded.split(",")[0].strip() if forwarded else (request.client.host if request.client else None)
+    from app.core.utils import real_client_ip
+    return real_client_ip(request)
 
 
 @router.get("")

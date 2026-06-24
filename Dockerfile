@@ -34,4 +34,16 @@ COPY . .
 
 EXPOSE 8004 8005
 
-CMD ["uvicorn", "app.web_app:app", "--host", "0.0.0.0", "--port", "8004"]
+# --proxy-headers makes Uvicorn parse X-Forwarded-{For,Proto,Host} so
+# request.client.host reflects the real client IP, not the TCP peer (which
+# behind K8s ingress / docker is a pod-network / bridge address). Without
+# this flag, Uvicorn's default --forwarded-allow-ips=127.0.0.1 means it
+# only trusts XFF from localhost — so ingress-nginx, sitting in another
+# pod, has its header silently ignored.
+# --forwarded-allow-ips="*" trusts XFF from any source. Safe here because
+# the LoadBalancer (externalTrafficPolicy=Local) sends traffic only to
+# ingress-nginx pods; web-api is not exposed directly to the internet, so
+# no client can reach it without first traversing ingress (which appends
+# the real $remote_addr to XFF). Revisit if web-api ever gains a public
+# endpoint that bypasses ingress.
+CMD ["uvicorn", "app.web_app:app", "--host", "0.0.0.0", "--port", "8004", "--proxy-headers", "--forwarded-allow-ips=*"]
