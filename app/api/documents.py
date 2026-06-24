@@ -305,6 +305,13 @@ async def toggle_publish(doc_id: int, db: Session = Depends(get_db), admin: User
 
 @router.post("/{doc_id}/sync")
 async def sync_document_endpoint(doc_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    # When RAG sync is disabled this backend must not run BGE-M3 embedding —
+    # the node is resource-constrained on purpose. Syncs are produced offline
+    # and pushed to Milvus separately. Reject manual triggers too, not just
+    # the scheduler, so a button click can't quietly spin up the embedding
+    # stack here. 503 = "this capability is intentionally off on this host".
+    if not settings.RAG_SYNC_ENABLED:
+        raise HTTPException(503, "本环境已关闭 RAG 同步（RAG_SYNC_ENABLED=false），请在离线环境同步后导入向量")
     doc = db.query(Document).filter(Document.id == doc_id).first()
     if not doc:
         raise HTTPException(404, "文档不存在")
