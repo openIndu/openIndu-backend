@@ -1,6 +1,7 @@
 """Resource tag CRUD API — manages dynamic brands, categories, and series."""
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_db, require_admin
@@ -43,7 +44,36 @@ async def list_tags(type: str | None = None, parent: str | None = None, brand: s
     if brand is not None:
         q = q.filter(ResourceTag.brand_value == brand)
     tags = q.order_by(ResourceTag.type, ResourceTag.sort_order, ResourceTag.id).all()
-    return ok([t.to_dict() for t in tags])
+
+    # When a specific type is requested, bulk-compute usage counts so the UI
+    # can show "未使用" badges + filter. Doing this in one GROUP BY keeps it
+    # O(1) queries per request regardless of tag count. When the caller doesn't
+    # specify a type (rare — just the legacy "give me everything" case), skip
+    # the join to avoid running 5 separate counts and keep this fast.
+    usage_map: dict[str, int] = {}
+    if type == "doc_brand":
+        rows = db.query(Document.brand, func.count(Document.id)).group_by(Document.brand).all()
+        usage_map = {b: c for b, c in rows if b is not None}
+    elif type == "sw_brand":
+        rows = db.query(Software.brand, func.count(Software.id)).group_by(Software.brand).all()
+        usage_map = {b: c for b, c in rows if b is not None}
+    elif type == "doc_category":
+        rows = db.query(Document.category, func.count(Document.id)).group_by(Document.category).all()
+        usage_map = {c: n for c, n in rows if c is not None}
+    elif type == "sw_category":
+        rows = db.query(Software.category, func.count(Software.id)).group_by(Software.category).all()
+        usage_map = {c: n for c, n in rows if c is not None}
+    elif type == "doc_series":
+        rows = db.query(Document.series, func.count(Document.id)).group_by(Document.series).all()
+        usage_map = {s: n for s, n in rows if s is not None}
+
+    def tag_dict(t: ResourceTag) -> dict:
+        d = t.to_dict()
+        if type:  # only annotate when we actually computed the counts
+            d["usage_count"] = int(usage_map.get(t.value, 0))
+        return d
+
+    return ok([tag_dict(t) for t in tags])
 
 
 @router.post("")

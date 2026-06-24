@@ -273,6 +273,26 @@ async def dashboard_stats(db: Session = Depends(get_db), admin: User = Depends(r
     for item in monthly_anon_visitors:
         item["count"] = anon_map.get(item["date"], 0)
 
+    # Logged-in series (user_id IS NOT NULL), deduped by user_id per day.
+    monthly_login_visitors = [{"date": str(month_start_cst_date + timedelta(days=i)), "count": 0} for i in range(month_days)]
+    login_month_rows = (
+        db.query(
+            func.date(VisitEvent.created_at).label("day"),
+            func.count(func.distinct(VisitEvent.user_id)).label("cnt"),
+        )
+        .filter(
+            VisitEvent.user_id.isnot(None),
+            VisitEvent.created_at >= month_start,
+            VisitEvent.created_at < month_end,
+        )
+        .group_by(func.date(VisitEvent.created_at))
+        .order_by(func.date(VisitEvent.created_at))
+        .all()
+    )
+    login_map = {str(r.day): r.cnt for r in login_month_rows}
+    for item in monthly_login_visitors:
+        item["count"] = login_map.get(item["date"], 0)
+
     # ---- yearly anonymous visit trend (last 12 months, by month) ----
     # 365 daily points are too dense to render readably, so we aggregate by
     # month. Window: from the 1st of "11 months ago" through today, inclusive.
@@ -307,6 +327,22 @@ async def dashboard_stats(db: Session = Depends(get_db), admin: User = Depends(r
         for yy, mm in months
     ]
 
+    # Last 12 months, all visits (anon + authenticated), deduped by ip_address.
+    yearly_all_rows = (
+        db.query(
+            func.to_char(VisitEvent.created_at, "YYYY-MM").label("ym"),
+            func.count(func.distinct(VisitEvent.ip_address)).label("cnt"),
+        )
+        .filter(VisitEvent.created_at >= year_start_utc)
+        .group_by("ym")
+        .all()
+    )
+    yearly_all_map = {r.ym: r.cnt for r in yearly_all_rows}
+    yearly_visitors = [
+        {"date": f"{yy:04d}-{mm:02d}", "count": yearly_all_map.get(f"{yy:04d}-{mm:02d}", 0)}
+        for yy, mm in months
+    ]
+
     return ok({
         "total_users": total_users,
         "total_docs": total_docs,
@@ -334,7 +370,9 @@ async def dashboard_stats(db: Session = Depends(get_db), admin: User = Depends(r
         "monthly_registrations": monthly_registrations,
         "monthly_visitors": monthly_visitors,
         "monthly_anon_visitors": monthly_anon_visitors,
+        "monthly_login_visitors": monthly_login_visitors,
         "yearly_anon_visitors": yearly_anon_visitors,
+        "yearly_visitors": yearly_visitors,
     })
 
 
