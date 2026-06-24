@@ -55,6 +55,23 @@ def _check_document_daily_limit(db: Session, user: User) -> None:
         raise HTTPException(status_code=429, detail="今日文档下载次数已用完（5次/天）")
 
 
+def _check_document_preview_daily_limit(db: Session, user: User) -> None:
+    # Preview has its OWN daily quota, separate from downloads — in-page reading
+    # shouldn't consume the 5/day download budget. It's still capped (and logged
+    # under a distinct resource_type) so preview can't be used to bypass the
+    # download limit, since the inline file can still be saved. Admins are exempt.
+    if user.role == "admin":
+        return
+    today_start = datetime.combine(date.today(), datetime.min.time())
+    count = db.query(DownloadLog).filter(
+        DownloadLog.user_id == user.id,
+        DownloadLog.resource_type == "document_preview",
+        DownloadLog.created_at >= today_start,
+    ).count()
+    if count >= settings.PREVIEW_DAILY_LIMIT:
+        raise HTTPException(status_code=429, detail=f"今日文档预览次数已用完（{settings.PREVIEW_DAILY_LIMIT}次/天）")
+
+
 def _file_size(file: UploadFile) -> int:
     """Return upload size without loading the file into memory."""
     if file.size is not None:
@@ -186,13 +203,18 @@ async def get_document_download_link(doc_id: int, request: Request, db: Session 
 
 @router.get("/{doc_id}/preview-link")
 async def get_document_preview_link(doc_id: int, request: Request, db: Session = Depends(get_db), current_user: User = Depends(require_member)):
-    """Return an inline presigned URL so the browser renders the PDF in‑page."""
+    """Return an inline presigned URL so the browser renders the PDF in‑page.
+
+    Preview uses a SEPARATE daily quota (``PREVIEW_DAILY_LIMIT``) and does NOT
+    consume the download budget nor bump ``download_count`` — previewing is not a
+    download. The preview is logged under ``resource_type=document_preview`` so it
+    is counted independently and still capped (preview can't bypass the limit).
+    """
     doc = db.query(Document).filter(Document.id == doc_id).first()
     if not doc:
         raise HTTPException(status_code=404, detail="文档不存在")
-    _check_document_daily_limit(db, current_user)
-    doc.download_count = (doc.download_count or 0) + 1
-    db.add(DownloadLog(user_id=current_user.id, resource_type="document", resource_id=doc_id, ip_address=client_ip(request)))
+    _check_document_preview_daily_limit(db, current_user)
+    db.add(DownloadLog(user_id=current_user.id, resource_type="document_preview", resource_id=doc_id, ip_address=client_ip(request)))
     db.commit()
     inline_url = storage_service.get_preview_url(doc.oss_key)
     return ok({"preview_url": inline_url["url"], "expires_in": inline_url["expires_in"], "filename": doc.original_name})

@@ -46,6 +46,10 @@ class Settings(BaseSettings):
     OSS_LEGACY_DOC_PREFIX: str = "doc"
 
     DOWNLOAD_DAILY_LIMIT: int = 5
+    # Preview has its own daily quota, separate from downloads: in-page reading
+    # shouldn't burn the download budget, but it's still capped so the preview
+    # endpoint can't be used to bypass the download limit (inline files can be saved).
+    PREVIEW_DAILY_LIMIT: int = 20
     PRESIGNED_URL_EXPIRE_MINUTES: int = 5
     DOCUMENT_MAX_SIZE_MB: int = 50
     SOFTWARE_MAX_SIZE_GB: int = 5

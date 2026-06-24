@@ -42,8 +42,9 @@ def _make_client(app, auth_user=None):
 
     Clears any existing overrides on the app first to ensure test isolation.
     """
-    from app.core.dependencies import get_db, require_admin, require_auth, require_member
     from fastapi.testclient import TestClient
+
+    from app.core.dependencies import get_db, require_admin, require_auth, require_member
 
     # Clear previous overrides for test isolation
     app.dependency_overrides.clear()
@@ -297,3 +298,120 @@ class TestDocumentDetail:
 
         response = client.get("/api/v1/documents/99999")
         assert response.status_code == 404
+
+
+def _make_doc(id=1):
+    doc = MagicMock()
+    doc.id = id
+    doc.oss_key = "documents/siemens/x.pdf"
+    doc.original_name = "x.pdf"
+    doc.download_count = 7
+    return doc
+
+
+class TestDocumentPreviewLimit:
+    """Preview uses a SEPARATE daily quota (PREVIEW_DAILY_LIMIT) — it must not
+    consume the download budget nor bump download_count."""
+
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        from app.web_app import app
+        self.app = app
+
+    def test_preview_separate_quota_and_no_download_count_bump(self):
+        """Under the preview quota: 200, logs document_preview, leaves download_count untouched."""
+        from app.services.storage_service import storage_service
+
+        member = _make_user(role="member")
+        client = _make_client(self.app, auth_user=member)
+        doc = _make_doc()
+        # Document.first() -> doc ; DownloadLog.count() -> 0 (under preview quota)
+        client._mock_db.query.return_value = _query_chain(first=doc, count=0)
+
+        with patch.object(storage_service, "get_preview_url",
+                          return_value={"url": "http://x/preview", "expires_in": 300}):
+            response = client.get("/api/v1/documents/1/preview-link")
+
+        assert response.status_code == 200
+        assert response.json()["data"]["preview_url"] == "http://x/preview"
+        # preview is not a download — counter must stay put
+        assert doc.download_count == 7
+        # the log must use the distinct preview resource_type
+        added = client._mock_db.add.call_args[0][0]
+        assert added.resource_type == "document_preview"
+
+    def test_preview_429_when_preview_quota_exhausted(self):
+        """At/over the preview quota: 429, and nothing is logged."""
+        from app.core.config import settings
+
+        member = _make_user(role="member")
+        client = _make_client(self.app, auth_user=member)
+        doc = _make_doc()
+        client._mock_db.query.return_value = _query_chain(first=doc, count=settings.PREVIEW_DAILY_LIMIT)
+
+        response = client.get("/api/v1/documents/1/preview-link")
+
+        assert response.status_code == 429
+        client._mock_db.add.assert_not_called()
+
+    def test_preview_admin_bypasses_quota(self):
+        """Admins bypass the preview quota even when far over it."""
+        from app.services.storage_service import storage_service
+
+        admin = _make_user(role="admin")
+        client = _make_client(self.app, auth_user=admin)
+        doc = _make_doc()
+        client._mock_db.query.return_value = _query_chain(first=doc, count=9999)
+
+        with patch.object(storage_service, "get_preview_url",
+                          return_value={"url": "http://x/preview", "expires_in": 300}):
+            response = client.get("/api/v1/documents/1/preview-link")
+
+        assert response.status_code == 200
+
+    def test_preview_nonexistent_document_404(self):
+        """Preview of a missing document returns 404 before any quota check."""
+        member = _make_user(role="member")
+        client = _make_client(self.app, auth_user=member)
+        client._mock_db.query.return_value = _query_chain(first=None, count=0)
+
+        response = client.get("/api/v1/documents/99999/preview-link")
+        assert response.status_code == 404
+
+
+class TestDocumentDownloadLimit:
+    """Guard: download-link keeps using the download quota (resource_type=document)
+    and still bumps download_count — preview changes must not regress it."""
+
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        from app.web_app import app
+        self.app = app
+
+    def test_download_uses_document_quota_and_bumps_count(self):
+        from app.services.storage_service import storage_service
+
+        member = _make_user(role="member")
+        client = _make_client(self.app, auth_user=member)
+        doc = _make_doc()
+        client._mock_db.query.return_value = _query_chain(first=doc, count=0)
+
+        with patch.object(storage_service, "get_download_url",
+                          return_value={"url": "http://x/dl", "expires_in": 300}):
+            response = client.get("/api/v1/documents/1/download-link")
+
+        assert response.status_code == 200
+        assert doc.download_count == 8  # 7 -> 8
+        added = client._mock_db.add.call_args[0][0]
+        assert added.resource_type == "document"
+
+    def test_download_429_when_download_quota_exhausted(self):
+        from app.core.config import settings
+
+        member = _make_user(role="member")
+        client = _make_client(self.app, auth_user=member)
+        doc = _make_doc()
+        client._mock_db.query.return_value = _query_chain(first=doc, count=settings.DOWNLOAD_DAILY_LIMIT)
+
+        response = client.get("/api/v1/documents/1/download-link")
+        assert response.status_code == 429
