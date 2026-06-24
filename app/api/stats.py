@@ -89,19 +89,30 @@ async def dashboard_stats(db: Session = Depends(get_db), admin: User = Depends(r
     )
     daily_logins = [{"date": str(r.day), "count": r.cnt} for r in login_rows]
 
+    # ---- period stats: today / this month (Asia/Shanghai) ----
+    today_start, today_end = _today_range_utc()
+    month_start, month_end = _month_range_utc()
+
+    # Geo distribution — based on this-month visit_events, split cleanly by
+    # whether the visit was authenticated. Anonymous and authenticated buckets
+    # are counted independently against ip_address (anon) / user_id (auth) so
+    # the two columns are honest and never need subtraction guards.
     geo: dict[str, dict[str, int | float | str]] = {}
-    visit_geo_rows = (
+    anon_geo_rows = (
         db.query(
             VisitEvent.geo_location.label("name"),
             VisitEvent.country_code.label("country_code"),
-            func.count(func.distinct(VisitEvent.ip_address)).label("visitors"),
-            func.count(func.distinct(VisitEvent.user_id)).label("registrations"),
+            func.count(func.distinct(VisitEvent.ip_address)).label("anonymous"),
         )
-        .filter(VisitEvent.created_at >= online_cutoff)
+        .filter(
+            VisitEvent.user_id.is_(None),
+            VisitEvent.created_at >= month_start,
+            VisitEvent.created_at < month_end,
+        )
         .group_by(VisitEvent.geo_location, VisitEvent.country_code)
         .all()
     )
-    for row in visit_geo_rows:
+    for row in anon_geo_rows:
         name = row.name or "未知"
         point = GEO_POINTS.get(name, GEO_POINTS["未知"])
         geo[name] = {
@@ -109,19 +120,33 @@ async def dashboard_stats(db: Session = Depends(get_db), admin: User = Depends(r
             "country_code": row.country_code or point["country_code"],
             "lat": point["lat"],
             "lng": point["lng"],
-            "visitors": row.visitors or 0,
-            "registrations": row.registrations or 0,
+            "visitors": int(row.anonymous or 0),  # legacy field — total dot weight; populated by both buckets below
+            "registrations": 0,
             "online": 0,
-            "anonymous": 0,
+            "anonymous": int(row.anonymous or 0),
         }
 
-    active_sessions = db.query(LoginSession).filter(LoginSession.is_active.is_(True)).all()
-    for session in active_sessions:
-        name = session.geo_location or "未知"
+    auth_geo_rows = (
+        db.query(
+            VisitEvent.geo_location.label("name"),
+            VisitEvent.country_code.label("country_code"),
+            func.count(func.distinct(VisitEvent.user_id)).label("authenticated"),
+        )
+        .filter(
+            VisitEvent.user_id.isnot(None),
+            VisitEvent.created_at >= month_start,
+            VisitEvent.created_at < month_end,
+        )
+        .group_by(VisitEvent.geo_location, VisitEvent.country_code)
+        .all()
+    )
+    for row in auth_geo_rows:
+        name = row.name or "未知"
         point = GEO_POINTS.get(name, GEO_POINTS["未知"])
+        auth_n = int(row.authenticated or 0)
         entry = geo.setdefault(name, {
             "name": name,
-            "country_code": point["country_code"],
+            "country_code": row.country_code or point["country_code"],
             "lat": point["lat"],
             "lng": point["lng"],
             "visitors": 0,
@@ -129,23 +154,17 @@ async def dashboard_stats(db: Session = Depends(get_db), admin: User = Depends(r
             "online": 0,
             "anonymous": 0,
         })
-        entry["online"] = int(entry["online"]) + 1
+        entry["online"] = int(entry["online"]) + auth_n  # "online" is the legacy field name the map renders for the auth bucket
+        entry["registrations"] = int(entry["registrations"]) + auth_n
+        entry["visitors"] = int(entry["visitors"]) + auth_n
 
-    for entry in geo.values():
-        entry["anonymous"] = max(int(entry["visitors"]) - int(entry["online"]), 0)
-
-    geo_list = sorted(geo.values(), key=lambda x: -(int(x["visitors"]) + int(x["online"])))
-
-    # ---- period stats: today / this month (Asia/Shanghai) ----
-    today_start, today_end = _today_range_utc()
-    month_start, month_end = _month_range_utc()
+    geo_list = sorted(geo.values(), key=lambda x: -(int(x["anonymous"]) + int(x["online"])))
 
     current_active_users = db.query(func.count(func.distinct(LoginSession.user_id))).filter(
         LoginSession.is_active.is_(True)
     ).scalar() or 0
 
-    today_active_users = db.query(func.count(func.distinct(VisitEvent.user_id))).filter(
-        VisitEvent.user_id.isnot(None),
+    today_active_users = db.query(func.count(func.distinct(VisitEvent.ip_address))).filter(
         VisitEvent.created_at >= today_start,
         VisitEvent.created_at < today_end,
     ).scalar() or 0
@@ -165,11 +184,14 @@ async def dashboard_stats(db: Session = Depends(get_db), admin: User = Depends(r
         Software.created_at < today_end,
     ).scalar() or 0
 
-    month_active_users = db.query(func.count(func.distinct(VisitEvent.user_id))).filter(
-        VisitEvent.user_id.isnot(None),
+    month_active_users = db.query(func.count(func.distinct(VisitEvent.ip_address))).filter(
         VisitEvent.created_at >= month_start,
         VisitEvent.created_at < month_end,
     ).scalar() or 0
+
+    # Cumulative across all time — answers "how many distinct visitors have ever
+    # reached the site?" Anonymous + authenticated together, deduped by IP.
+    total_visitors = db.query(func.count(func.distinct(VisitEvent.ip_address))).scalar() or 0
 
     month_new_users = db.query(func.count(User.id)).filter(
         User.created_at >= month_start,
@@ -193,10 +215,13 @@ async def dashboard_stats(db: Session = Depends(get_db), admin: User = Depends(r
 
     monthly_registrations: list[dict[str, int | str]] = []
     monthly_visitors: list[dict[str, int | str]] = []
+    monthly_anon_visitors: list[dict[str, int | str]] = []
     for i in range(month_days):
         day_date = month_start_cst_date + timedelta(days=i)
-        monthly_registrations.append({"date": str(day_date), "count": 0})
-        monthly_visitors.append({"date": str(day_date), "count": 0})
+        date_str = str(day_date)
+        monthly_registrations.append({"date": date_str, "count": 0})
+        monthly_visitors.append({"date": date_str, "count": 0})
+        monthly_anon_visitors.append({"date": date_str, "count": 0})
 
     reg_month_rows = (
         db.query(func.date(User.created_at).label("day"), func.count(User.id).label("cnt"))
@@ -209,13 +234,15 @@ async def dashboard_stats(db: Session = Depends(get_db), admin: User = Depends(r
     for item in monthly_registrations:
         item["count"] = reg_map.get(item["date"], 0)
 
+    # All visits (anon + authenticated), deduped by IP per day — this replaces
+    # the previous "logged-in only" series, which was always near zero because
+    # the bulk of traffic is anonymous.
     visit_month_rows = (
         db.query(
             func.date(VisitEvent.created_at).label("day"),
-            func.count(func.distinct(VisitEvent.user_id)).label("cnt"),
+            func.count(func.distinct(VisitEvent.ip_address)).label("cnt"),
         )
         .filter(
-            VisitEvent.user_id.isnot(None),
             VisitEvent.created_at >= month_start,
             VisitEvent.created_at < month_end,
         )
@@ -227,10 +254,64 @@ async def dashboard_stats(db: Session = Depends(get_db), admin: User = Depends(r
     for item in monthly_visitors:
         item["count"] = visit_map.get(item["date"], 0)
 
+    # Anonymous-only series (user_id IS NULL).
+    anon_month_rows = (
+        db.query(
+            func.date(VisitEvent.created_at).label("day"),
+            func.count(func.distinct(VisitEvent.ip_address)).label("cnt"),
+        )
+        .filter(
+            VisitEvent.user_id.is_(None),
+            VisitEvent.created_at >= month_start,
+            VisitEvent.created_at < month_end,
+        )
+        .group_by(func.date(VisitEvent.created_at))
+        .order_by(func.date(VisitEvent.created_at))
+        .all()
+    )
+    anon_map = {str(r.day): r.cnt for r in anon_month_rows}
+    for item in monthly_anon_visitors:
+        item["count"] = anon_map.get(item["date"], 0)
+
+    # ---- yearly anonymous visit trend (last 12 months, by month) ----
+    # 365 daily points are too dense to render readably, so we aggregate by
+    # month. Window: from the 1st of "11 months ago" through today, inclusive.
+    months: list[tuple[int, int]] = []
+    y, m = today_cst.year, today_cst.month
+    for _ in range(12):
+        months.append((y, m))
+        m -= 1
+        if m == 0:
+            m = 12
+            y -= 1
+    months.reverse()
+
+    year_start_cst = datetime(months[0][0], months[0][1], 1, tzinfo=CST)
+    year_start_utc = _to_naive_utc(year_start_cst)
+
+    yearly_anon_rows = (
+        db.query(
+            func.to_char(VisitEvent.created_at, "YYYY-MM").label("ym"),
+            func.count(func.distinct(VisitEvent.ip_address)).label("cnt"),
+        )
+        .filter(
+            VisitEvent.user_id.is_(None),
+            VisitEvent.created_at >= year_start_utc,
+        )
+        .group_by("ym")
+        .all()
+    )
+    yearly_map = {r.ym: r.cnt for r in yearly_anon_rows}
+    yearly_anon_visitors = [
+        {"date": f"{yy:04d}-{mm:02d}", "count": yearly_map.get(f"{yy:04d}-{mm:02d}", 0)}
+        for yy, mm in months
+    ]
+
     return ok({
         "total_users": total_users,
         "total_docs": total_docs,
         "total_software": total_software,
+        "total_visitors": total_visitors,
         "new_users_30d": new_users_30d,
         "visitors_30d": visitors_30d,
         "online_count": online_count,
@@ -252,6 +333,8 @@ async def dashboard_stats(db: Session = Depends(get_db), admin: User = Depends(r
         "month_new_software": month_new_software,
         "monthly_registrations": monthly_registrations,
         "monthly_visitors": monthly_visitors,
+        "monthly_anon_visitors": monthly_anon_visitors,
+        "yearly_anon_visitors": yearly_anon_visitors,
     })
 
 
