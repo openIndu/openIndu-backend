@@ -54,6 +54,14 @@ class Settings(BaseSettings):
     DOCUMENT_MAX_SIZE_MB: int = 50
     SOFTWARE_MAX_SIZE_GB: int = 5
     RAG_SYNC_INTERVAL_MINUTES: int = 60
+    # Whether the in-process APScheduler registers the OSS → Milvus sync job
+    # at startup. Production sets this to ``false`` so resource-constrained
+    # nodes don't run the expensive BGE-M3 embedding cycle every hour;
+    # syncs are triggered manually instead (POST /sync/trigger, the admin UI
+    # button, or scripts/sync_local.py from the aggregate repo). The two
+    # lightweight cleanup jobs (sessions, expired tokens) always run — they
+    # cost almost nothing and dashboard "current online" depends on them.
+    RAG_SYNC_ENABLED: bool = True
 
     # --- Direct-to-OSS multipart upload (large software packages) ---
     # Part size for multipart uploads. Must be ≥ 5 MiB (S3/OSS minimum).

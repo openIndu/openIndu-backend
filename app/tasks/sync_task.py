@@ -132,7 +132,17 @@ class SyncScheduler:
     def start(self):
         if self.scheduler.running:
             return
-        self.scheduler.add_job(scheduled_sync, "interval", minutes=settings.RAG_SYNC_INTERVAL_MINUTES, id="oss_rag_sync", replace_existing=True)
+        # RAG sync is gated by a config flag so resource-constrained production
+        # nodes can skip the hourly BGE-M3 embedding cycle and rely on manual
+        # triggers (POST /sync/trigger, admin UI button, or
+        # scripts/sync_local.py) instead. The two cleanup jobs always run —
+        # they're cheap and dashboard "current online" depends on
+        # cleanup_sessions flipping stale rows every minute.
+        if settings.RAG_SYNC_ENABLED:
+            self.scheduler.add_job(scheduled_sync, "interval", minutes=settings.RAG_SYNC_INTERVAL_MINUTES, id="oss_rag_sync", replace_existing=True)
+            logger.info("RAG sync scheduler enabled — every %d minutes", settings.RAG_SYNC_INTERVAL_MINUTES)
+        else:
+            logger.info("RAG sync scheduler DISABLED (RAG_SYNC_ENABLED=false); use POST /sync/trigger or scripts/sync_local.py to run manually")
         self.scheduler.add_job(cleanup_expired_tokens, "interval", hours=1, id="token_cleanup", replace_existing=True)
         self.scheduler.add_job(cleanup_sessions, "interval", minutes=1, id="session_cleanup", replace_existing=True)
         self.scheduler.start()
