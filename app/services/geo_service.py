@@ -51,6 +51,19 @@ COUNTRY_POINTS: dict[str, tuple[float, float]] = {
     "KR": (35.9078, 127.7669), "FR": (46.2276, 2.2137), "CA": (56.1304, -106.3468),
     "AU": (-25.2744, 133.7751), "RU": (61.5240, 105.3188), "IN": (20.5937, 78.9629),
 }
+# Country code -> Chinese name (the xdb gives English names abroad; we display 中文).
+COUNTRY_NAMES_CN: dict[str, str] = {
+    "US": "美国", "JP": "日本", "KR": "韩国", "KP": "朝鲜", "GB": "英国", "DE": "德国",
+    "FR": "法国", "IT": "意大利", "ES": "西班牙", "PT": "葡萄牙", "NL": "荷兰", "BE": "比利时",
+    "CH": "瑞士", "AT": "奥地利", "IE": "爱尔兰", "SE": "瑞典", "NO": "挪威", "DK": "丹麦",
+    "FI": "芬兰", "PL": "波兰", "CZ": "捷克", "HU": "匈牙利", "RO": "罗马尼亚", "GR": "希腊",
+    "UA": "乌克兰", "RU": "俄罗斯", "TR": "土耳其", "CA": "加拿大", "MX": "墨西哥", "BR": "巴西",
+    "AR": "阿根廷", "CL": "智利", "AU": "澳大利亚", "NZ": "新西兰", "SG": "新加坡", "MY": "马来西亚",
+    "TH": "泰国", "VN": "越南", "ID": "印度尼西亚", "PH": "菲律宾", "IN": "印度", "PK": "巴基斯坦",
+    "BD": "孟加拉国", "MM": "缅甸", "KH": "柬埔寨", "LA": "老挝", "MN": "蒙古", "KZ": "哈萨克斯坦",
+    "SA": "沙特阿拉伯", "AE": "阿联酋", "IL": "以色列", "EG": "埃及", "ZA": "南非", "NG": "尼日利亚",
+    "HK": "中国香港", "MO": "中国澳门", "TW": "中国台湾",
+}
 _LOCAL_POINT = (31.2304, 121.4737)
 _UNKNOWN_POINT = (20.0, 0.0)
 
@@ -166,7 +179,7 @@ def _resolve(ip: str | None) -> tuple[str, str]:
         return "未知", "UNKNOWN"
     if code == "CN":
         return _format_cn(province, city, isp), "CN"
-    return (country or "未知"), (code or "UNKNOWN")
+    return (COUNTRY_NAMES_CN.get(code) or country or "未知"), (code or "UNKNOWN")
 
 
 def resolve_ip_geo(ip: str | None) -> dict[str, str | float]:

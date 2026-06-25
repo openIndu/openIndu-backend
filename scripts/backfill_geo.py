@@ -1,9 +1,14 @@
-"""Backfill geo_location for historical rows that predate ip2region resolution.
+"""Reconcile geo_location/country_code with the current ip2region resolution.
 
-Older login_sessions / visit_events were written with geo_location='未知' (the
-pre-ip2region behavior resolved every public IP to 未知). This re-resolves those
-rows from their stored ip_address. Guarded: dry-run by default, commits only with
---write, and refuses to run if the ip2region xdb is unavailable.
+Re-resolves every distinct ip_address in login_sessions / visit_events and updates
+the rows whose stored value is out of sync with what resolve_ip_geo() now returns.
+This covers both the historical "未知" rows (pre-ip2region) and any rows written
+with an older display format (e.g. an English country name before 美国-style
+localization). Idempotent: a second run changes nothing.
+
+Guarded: dry-run by default, commits only with --write, never overwrites a good
+value with "未知" (IPs that no longer resolve are skipped), and refuses to run if
+the ip2region xdb is unavailable.
 
 Usage:
     python scripts/backfill_geo.py            # dry-run: report only, no writes
@@ -22,25 +27,11 @@ from app.models.login_session import LoginSession
 from app.models.visit_event import VisitEvent
 from app.services.geo_service import _get_searcher, resolve_ip_geo
 
-STALE_VALUES = ("未知",)
 
-
-def _stale_filter(model):
-    return or_(model.geo_location.in_(STALE_VALUES), model.geo_location.is_(None))
-
-
-def backfill(session, model, has_country_code: bool, apply: bool) -> int:
+def reconcile(session, model, has_country_code: bool, apply: bool) -> int:
     total = session.scalar(select(func.count()).select_from(model))
-    stale_before = session.scalar(
-        select(func.count()).select_from(model).where(_stale_filter(model))
-    )
-    ips = [
-        row[0]
-        for row in session.execute(
-            select(model.ip_address).where(_stale_filter(model)).distinct()
-        ).all()
-    ]
-    print(f"\n[{model.__tablename__}] rows={total} stale(未知/NULL)={stale_before} distinct_ips={len(ips)}")
+    ips = [row[0] for row in session.execute(select(model.ip_address).distinct()).all()]
+    print(f"\n[{model.__tablename__}] rows={total} distinct_ips={len(ips)}")
 
     changed_rows = 0
     sample: list[str] = []
@@ -48,27 +39,33 @@ def backfill(session, model, has_country_code: bool, apply: bool) -> int:
         geo = resolve_ip_geo(ip)
         name = geo["name"]
         if name == "未知":
-            continue  # still unresolvable (e.g. "unknown" / bogus IP) — leave as-is
+            continue  # unresolvable now — never overwrite an existing value with 未知
+
+        # rows for this ip whose stored geo is out of sync with current resolution
+        mismatch = or_(model.geo_location.is_(None), model.geo_location != name)
+        if has_country_code:
+            mismatch = or_(mismatch, model.country_code.is_(None), model.country_code != geo["country_code"])
+        where = (model.ip_address == ip, mismatch)  # multi-column guard
+
+        n_match = session.scalar(select(func.count()).select_from(model).where(*where)) or 0
+        if n_match == 0:
+            continue  # already in sync
 
         values = {"geo_location": name}
         if has_country_code:
             values["country_code"] = geo["country_code"]
-
-        where = (model.ip_address == ip, _stale_filter(model))  # multi-column guard
         if apply:
             result = session.execute(update(model).where(*where).values(**values))
             changed_rows += result.rowcount or 0
         else:
-            changed_rows += session.scalar(
-                select(func.count()).select_from(model).where(*where)
-            ) or 0
-        if len(sample) < 8:
+            changed_rows += n_match
+        if len(sample) < 10:
             sample.append(f"  {ip:>16s} -> {name}")
 
     for line in sample:
         print(line)
-    if len(ips) > len(sample):
-        print(f"  ... (+{len(ips) - len(sample)} more IPs)")
+    if changed_rows and len(sample) >= 10:
+        print("  ...")
     print(f"[{model.__tablename__}] {'UPDATED' if apply else 'WOULD UPDATE'} rows: {changed_rows}")
     return changed_rows
 
@@ -80,14 +77,14 @@ def main() -> None:
 
     if _get_searcher() is None:
         print("ERROR: ip2region xdb unavailable — refusing to run "
-              "(every IP would resolve to 未知, so backfill would be a no-op at best).")
+              "(nothing would resolve, so reconcile would be a no-op at best).")
         sys.exit(1)
 
     session = SessionLocal()
     try:
         total_changed = 0
-        total_changed += backfill(session, LoginSession, has_country_code=False, apply=args.write)
-        total_changed += backfill(session, VisitEvent, has_country_code=True, apply=args.write)
+        total_changed += reconcile(session, LoginSession, has_country_code=False, apply=args.write)
+        total_changed += reconcile(session, VisitEvent, has_country_code=True, apply=args.write)
 
         if args.write:
             session.commit()
