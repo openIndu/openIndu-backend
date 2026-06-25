@@ -164,6 +164,17 @@ async def dashboard_stats(db: Session = Depends(get_db), admin: User = Depends(r
         LoginSession.is_active.is_(True)
     ).scalar() or 0
 
+    # Real-time visitor count: distinct IPs with a visit_event in the last 5 minutes
+    # (anonymous + authenticated). 本地开发 / 内网 IPs are excluded so dev self-traffic
+    # doesn't inflate the dashboard's "right now" reading.
+    five_min_ago = _to_naive_utc(datetime.now(CST) - timedelta(minutes=5))
+    current_total_visitors = db.query(
+        func.count(func.distinct(VisitEvent.ip_address))
+    ).filter(
+        VisitEvent.created_at >= five_min_ago,
+        VisitEvent.geo_location.is_distinct_from("本地开发"),
+    ).scalar() or 0
+
     today_active_users = db.query(func.count(func.distinct(VisitEvent.ip_address))).filter(
         VisitEvent.created_at >= today_start,
         VisitEvent.created_at < today_end,
@@ -359,6 +370,7 @@ async def dashboard_stats(db: Session = Depends(get_db), admin: User = Depends(r
         "geo_distribution": geo_list,
         # period stats
         "current_active_users": current_active_users,
+        "current_total_visitors": current_total_visitors,
         "today_active_users": today_active_users,
         "today_new_users": today_new_users,
         "today_new_docs": today_new_docs,
