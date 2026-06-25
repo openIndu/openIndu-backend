@@ -12,7 +12,7 @@ from app.models.login_session import LoginSession
 from app.models.software import Software
 from app.models.user import User
 from app.models.visit_event import VisitEvent
-from app.services.geo_service import GEO_POINTS
+from app.services.geo_service import lookup_point
 
 router = APIRouter(prefix="/stats")
 
@@ -114,7 +114,7 @@ async def dashboard_stats(db: Session = Depends(get_db), admin: User = Depends(r
     )
     for row in anon_geo_rows:
         name = row.name or "未知"
-        point = GEO_POINTS.get(name, GEO_POINTS["未知"])
+        point = lookup_point(name, row.country_code)
         geo[name] = {
             "name": name,
             "country_code": row.country_code or point["country_code"],
@@ -142,7 +142,7 @@ async def dashboard_stats(db: Session = Depends(get_db), admin: User = Depends(r
     )
     for row in auth_geo_rows:
         name = row.name or "未知"
-        point = GEO_POINTS.get(name, GEO_POINTS["未知"])
+        point = lookup_point(name, row.country_code)
         auth_n = int(row.authenticated or 0)
         entry = geo.setdefault(name, {
             "name": name,

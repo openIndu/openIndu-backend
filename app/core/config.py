@@ -13,6 +13,10 @@ class Settings(BaseSettings):
     STORAGE_BACKEND: str = "local"
     DATA_DIR: str = "/data/files"
 
+    # IP geo resolution (ip2region offline xdb). Relative paths resolve against
+    # the backend root; empty falls back to data/ip2region_v4.xdb.
+    IP2REGION_XDB_PATH: str = "data/ip2region_v4.xdb"
+
     # --- S3 / OSS credentials (only used when STORAGE_BACKEND=s3) ---
     OSS_ACCESS_KEY_ID: str = "minioadmin"
     OSS_ACCESS_KEY_SECRET: str = "minioadmin"
