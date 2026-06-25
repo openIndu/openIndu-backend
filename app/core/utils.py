@@ -1,6 +1,8 @@
 """Shared utility helpers."""
+import ipaddress as _ipaddress
 import re
 from datetime import datetime, timezone
+from typing import Any as _Any  # avoid a forward-import of FastAPI's Request
 
 # Allowed in OSS object names: letters/digits/CJK/dot/dash/underscore/space.
 # Everything else (path separators, control chars, &, ?, #, …) is stripped so
@@ -101,10 +103,6 @@ def iso_utc(dt: datetime | None) -> str | None:
 # Returns ``None`` only if the request has no client at all (extremely rare
 # in tests). Callers wanting a string sentinel should ``... or "unknown"``.
 # ---------------------------------------------------------------------------
-
-import ipaddress as _ipaddress
-from typing import Any as _Any  # avoid a forward-import of FastAPI's Request
-
 
 def _is_private(addr: str) -> bool:
     """True for loopback / RFC1918 / link-local / unique-local — i.e. not a
