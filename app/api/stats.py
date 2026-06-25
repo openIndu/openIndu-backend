@@ -2,7 +2,7 @@
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_db, require_admin
@@ -417,4 +417,48 @@ async def login_history(
         "login_time": session.last_active_at.isoformat() if session.last_active_at else None,
         "is_active": session.is_active,
     } for session, phone in rows]
+    return ok({"items": items, "total": total, "page": page, "size": size})
+
+
+@router.get("/visit-logs")
+async def visit_logs(
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+    keyword: str | None = Query(None),       # matches masked phone's source or IP
+    authed: str | None = Query(None),         # 'yes' (登录) | 'no' (匿名) | None
+    include_local: bool = Query(False),       # 本地开发 / 内网访问默认隐藏
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    """Visit log (anonymous + authenticated), newest first.
+
+    Backed by visit_events. "本地开发" (private/loopback) visits are hidden unless
+    include_local=true. Search matches phone or IP; authed filters logged-in vs anon.
+    """
+    q = (
+        db.query(VisitEvent, User.phone)
+        .join(User, VisitEvent.user_id == User.id, isouter=True)
+        .order_by(VisitEvent.created_at.desc())
+    )
+    if not include_local:
+        q = q.filter(VisitEvent.geo_location.is_distinct_from("本地开发"))
+    if keyword:
+        like = f"%{keyword.strip()}%"
+        q = q.filter(or_(User.phone.ilike(like), VisitEvent.ip_address.ilike(like)))
+    if authed == "yes":
+        q = q.filter(VisitEvent.is_authenticated.is_(True))
+    elif authed == "no":
+        q = q.filter(VisitEvent.is_authenticated.is_(False))
+
+    total = q.count()
+    rows = q.offset((page - 1) * size).limit(size).all()
+    items = [{
+        "id": ev.id,
+        "username": mask_phone(phone) if phone else None,
+        "ip": ev.ip_address,
+        "location": ev.geo_location or "未知",
+        "path": ev.path,
+        "is_authenticated": ev.is_authenticated,
+        "time": ev.created_at.isoformat() if ev.created_at else None,
+    } for ev, phone in rows]
     return ok({"items": items, "total": total, "page": page, "size": size})
