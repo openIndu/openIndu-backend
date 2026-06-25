@@ -1,5 +1,6 @@
 """Shared utility helpers."""
 import re
+from datetime import datetime, timezone
 
 # Allowed in OSS object names: letters/digits/CJK/dot/dash/underscore/space.
 # Everything else (path separators, control chars, &, ?, #, …) is stripped so
@@ -49,6 +50,33 @@ def ok(data=None, message: str = "操作成功"):
     breaking array consumers on the frontend (``.filter is not a function``).
     """
     return {"code": 200, "message": message, "data": data if data is not None else {}}
+
+
+# ---------------------------------------------------------------------------
+# Datetime serialization
+#
+# Every DateTime column in our SQLAlchemy models is stored as a NAIVE UTC
+# datetime (we strip tzinfo before INSERT, see `utcnow()` in auth_service).
+# When such a value is serialized via ``dt.isoformat()`` directly, the output
+# has no timezone marker — e.g. ``2026-06-25T09:37:53.369247``. Browsers'
+# ``new Date(...)`` then parses that as **local time**, which on a CST machine
+# shifts every timestamp by ±8h.
+#
+# ``iso_utc(dt)`` is the single chokepoint that adds the ``+00:00`` marker so
+# the wire format is unambiguous. The frontend then renders with
+# ``new Date(s).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })``.
+# ---------------------------------------------------------------------------
+
+
+def iso_utc(dt: datetime | None) -> str | None:
+    """Serialize a (naive or aware) UTC datetime as ISO 8601 with explicit
+    ``+00:00`` marker. Returns ``None`` for ``None`` so it slots into dict
+    builders that need a JSON-null on the wire."""
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.isoformat()
 
 
 # ---------------------------------------------------------------------------

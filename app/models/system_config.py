@@ -1,6 +1,7 @@
 """System business configuration model."""
 from sqlalchemy import BigInteger, Column, DateTime, String, Text, func
 
+from app.core.utils import iso_utc
 from app.models import Base
 
 
@@ -18,5 +19,5 @@ class SystemConfig(Base):
             "config_key": self.config_key,
             "config_value": self.config_value,
             "description": self.description,
-            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            "updated_at": iso_utc(self.updated_at),
         }

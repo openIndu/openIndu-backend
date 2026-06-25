@@ -41,7 +41,7 @@ async def get_current_user(
     if not user_id:
         return None
     user = db.query(User).filter(User.id == int(user_id)).first()
-    if not user or not user.is_active or user.is_blacklisted:
+    if not user or user.deleted_at is not None or not user.is_active or user.is_blacklisted:
         return None
     # Check if tokens were invalidated after this token was issued
     if user.tokens_invalidated_at:

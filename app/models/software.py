@@ -2,6 +2,7 @@
 from sqlalchemy import BigInteger, Boolean, Column, DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import relationship
 
+from app.core.utils import iso_utc
 from app.models import Base
 
 
@@ -47,7 +48,7 @@ class Software(Base):
             "description": self.description,
             "is_active": self.is_active,
             "is_published": self.is_published,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "created_at": iso_utc(self.created_at),
         }
         if include_versions:
             data["versions"] = [v.to_dict() for v in self.versions]
@@ -85,7 +86,7 @@ class SoftwareVersion(Base):
             "file_hash": self.file_hash,
             "oss_key": self.oss_key,
             "download_count": self.download_count,
-            "upload_time": self.upload_time.isoformat() if self.upload_time else None,
+            "upload_time": iso_utc(self.upload_time),
             "is_active": self.is_active,
             "is_published": self.is_published,
         }

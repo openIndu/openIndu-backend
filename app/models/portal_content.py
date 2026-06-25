@@ -3,6 +3,7 @@ from sqlalchemy import BigInteger, Boolean, Column, DateTime, Integer, String, f
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.types import JSON
 
+from app.core.utils import iso_utc
 from app.models import Base
 
 
@@ -23,5 +24,5 @@ class PortalContent(Base):
             "content": self.content,
             "sort_order": self.sort_order,
             "is_active": self.is_active,
-            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            "updated_at": iso_utc(self.updated_at),
         }
