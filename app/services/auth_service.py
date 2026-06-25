@@ -146,6 +146,11 @@ class AuthService:
             raise HTTPException(status_code=400, detail="验证码错误或已过期")
         existing = db.query(User).filter(User.phone == phone).first()
         if existing:
+            # A soft-deleted row still occupies the unique phone slot; surface
+            # a distinct message so the admin can decide whether to restore or
+            # purge before the phone can be reused.
+            if existing.deleted_at is not None:
+                raise HTTPException(status_code=409, detail="该手机号曾被删除，如需重新注册请联系管理员恢复")
             raise HTTPException(status_code=409, detail="用户已存在")
         role = "admin" if db.query(func.count(User.id)).scalar() == 0 else "user"
         user = User(phone=phone, role=role, is_active=True, is_blacklisted=False, last_login=utcnow())
@@ -160,12 +165,41 @@ class AuthService:
         user = db.query(User).filter(User.phone == phone).first()
         if not user:
             raise HTTPException(status_code=400, detail="用户不存在，请先注册")
+        if user.deleted_at is not None:
+            raise HTTPException(status_code=403, detail="账号已被删除")
         if not user.is_active or user.is_blacklisted:
             raise HTTPException(status_code=403, detail="账号已被禁用")
         user.last_login = utcnow()
         db.commit()
         db.refresh(user)
         return {"user": user.to_dict(), "tokens": self.create_token_pair(user)}
+
+    def sign_in(self, db: Session, phone: str, code: str) -> dict:
+        """Single-step auth: verify code, then login if user exists or
+        auto-register on the spot. Returns the same envelope as login/register
+        with an extra ``is_new_user`` flag so the frontend can show a "首次登录
+        已为你创建账号" hint when appropriate.
+        """
+        if not self.verify_code(db, phone, code):
+            raise HTTPException(status_code=400, detail="验证码错误或已过期")
+        user = db.query(User).filter(User.phone == phone).first()
+        is_new_user = False
+        if user is None:
+            role = "admin" if db.query(func.count(User.id)).scalar() == 0 else "user"
+            user = User(phone=phone, role=role, is_active=True, is_blacklisted=False, last_login=utcnow())
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+            is_new_user = True
+        else:
+            if user.deleted_at is not None:
+                raise HTTPException(status_code=403, detail="账号已被删除")
+            if not user.is_active or user.is_blacklisted:
+                raise HTTPException(status_code=403, detail="账号已被禁用")
+            user.last_login = utcnow()
+            db.commit()
+            db.refresh(user)
+        return {"user": user.to_dict(), "tokens": self.create_token_pair(user), "is_new_user": is_new_user}
 
     def blacklist_token(self, db: Session, payload: dict, reason: str = "logout") -> None:
         jti = payload.get("jti")

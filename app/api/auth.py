@@ -56,6 +56,24 @@ async def register(body: AuthRequest, db: Session = Depends(get_db)):
     return ok(auth_service.register(db, body.phone, body.code), "注册成功")
 
 
+@router.post("/sign-in")
+@limiter.limit("10/minute")
+async def sign_in(request: Request, body: AuthRequest, db: Session = Depends(get_db)):
+    """Unified login/register entry point.
+
+    Verifies the SMS code, then logs the user in if the phone already has an
+    account, or creates one on the spot and logs in. The response envelope
+    matches /login and /register, with an extra ``is_new_user`` boolean for
+    the frontend to surface an onboarding hint on first-time login.
+
+    /login and /register remain for backwards compatibility with any external
+    caller; new portal flows should use /sign-in instead.
+    """
+    result = auth_service.sign_in(db, body.phone, body.code)
+    message = "首次登录，已为你创建账号" if result.get("is_new_user") else "登录成功"
+    return ok(result, message)
+
+
 @router.post("/refresh")
 async def refresh(body: RefreshRequest, db: Session = Depends(get_db)):
     return ok(auth_service.refresh_token(db, body.refresh_token), "刷新成功")

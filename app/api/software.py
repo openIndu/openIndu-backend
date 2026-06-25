@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.dependencies import get_db, require_admin, require_member
-from app.core.utils import ok, oss_key_for_upload
+from app.core.utils import iso_utc, ok, oss_key_for_upload
 from app.models.download_log import DownloadLog
 from app.models.resource_tag import ResourceTag
 from app.models.software import Software, SoftwareVersion
@@ -88,13 +88,13 @@ async def list_software(brand: str | None = None, category: str | None = None, k
                 "category": s.category,
                 "series": s.series,
                 "description": s.description,
-                "created_at": s.created_at.isoformat() if s.created_at else None,
+                "created_at": iso_utc(s.created_at),
                 "version_id": v.id,
                 "version": v.version,
                 "latest_version_size": v.file_size,
                 "file_hash": v.file_hash,
                 "oss_key": v.oss_key,
-                "version_upload_time": v.upload_time.isoformat() if v.upload_time else None,
+                "version_upload_time": iso_utc(v.upload_time),
                 "download_count": v.download_count,
                 "version_download_count": v.download_count,
                 "is_published": v.is_published,

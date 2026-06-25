@@ -1,6 +1,7 @@
 """User model."""
 from sqlalchemy import BigInteger, Boolean, Column, DateTime, ForeignKey, String, func
 
+from app.core.utils import iso_utc
 from app.models import Base
 
 
@@ -18,6 +19,10 @@ class User(Base):
     tokens_invalidated_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     last_login = Column(DateTime, nullable=True)
+    # Soft delete marker. NULL = live user; set = removed from admin UI and
+    # login. Existing visit_events / download_records / login_sessions are
+    # preserved for audit history.
+    deleted_at = Column(DateTime, nullable=True)
 
     def to_dict(self) -> dict:
         return {
@@ -27,9 +32,10 @@ class User(Base):
             "role": self.role,
             "is_active": self.is_active,
             "is_blacklisted": self.is_blacklisted,
-            "blacklisted_at": self.blacklisted_at.isoformat() if self.blacklisted_at else None,
+            "blacklisted_at": iso_utc(self.blacklisted_at),
             "blacklisted_by": self.blacklisted_by,
-            "tokens_invalidated_at": self.tokens_invalidated_at.isoformat() if self.tokens_invalidated_at else None,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-            "last_login": self.last_login.isoformat() if self.last_login else None,
+            "tokens_invalidated_at": iso_utc(self.tokens_invalidated_at),
+            "created_at": iso_utc(self.created_at),
+            "last_login": iso_utc(self.last_login),
+            "deleted_at": iso_utc(self.deleted_at),
         }

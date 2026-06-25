@@ -1,6 +1,7 @@
 """ResourceTag model — stores dynamic brand / category / series metadata."""
 from sqlalchemy import BigInteger, Boolean, Column, DateTime, Integer, String, func
 
+from app.core.utils import iso_utc
 from app.models import Base
 
 
@@ -27,5 +28,5 @@ class ResourceTag(Base):
             "brand_value": self.brand_value,
             "is_active": self.is_active,
             "sort_order": self.sort_order,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "created_at": iso_utc(self.created_at),
         }

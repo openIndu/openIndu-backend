@@ -6,7 +6,7 @@ from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_db, require_admin
-from app.core.utils import mask_phone, ok
+from app.core.utils import iso_utc, mask_phone, ok
 from app.models.document import Document
 from app.models.login_session import LoginSession
 from app.models.software import Software
@@ -426,8 +426,8 @@ async def login_history(
         "username": mask_phone(phone) or f"ID:{session.user_id}",
         "ip": session.ip_address,
         "location": session.geo_location or "未知",
-        # stored as naive UTC; mark as UTC so the browser doesn't reinterpret as local time
-        "login_time": session.last_active_at.replace(tzinfo=timezone.utc).isoformat() if session.last_active_at else None,
+        # stored as naive UTC; iso_utc adds the +00:00 marker
+        "login_time": iso_utc(session.last_active_at),
         "is_active": session.is_active,
     } for session, phone in rows]
     return ok({"items": items, "total": total, "page": page, "size": size})
@@ -477,7 +477,7 @@ async def visit_logs(
         "location": ev.geo_location or "未知",
         "path": ev.path,
         "is_authenticated": ev.is_authenticated,
-        # stored as naive UTC; mark as UTC so the browser doesn't reinterpret as local time
-        "time": ev.created_at.replace(tzinfo=timezone.utc).isoformat() if ev.created_at else None,
+        # stored as naive UTC; iso_utc adds the +00:00 marker
+        "time": iso_utc(ev.created_at),
     } for ev, phone in rows]
     return ok({"items": items, "total": total, "page": page, "size": size})

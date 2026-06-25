@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_db, require_admin
-from app.core.utils import ok
+from app.core.utils import _is_private, ok
 from app.models.admin_audit_log import AdminAuditLog
 from app.models.login_session import LoginSession
 from app.models.user import User
@@ -23,17 +23,44 @@ def audit(db: Session, admin_id: int, target_user_id: int, action: str, detail: 
 
 
 def _enrich_user_dict(db: Session, user_dict: dict, user_id: int) -> dict:
-    """Add online status and last login IP to user dict."""
+    """Add online status and last public login IP to user dict.
+
+    The IP picked is the last session whose ``ip_address`` is a real (public)
+    address — private / loopback / docker-bridge IPs are skipped so the admin
+    UI doesn't display dev-stack noise. This matters because the local dev
+    stack points at the production DB (see ``project_local_stack_remote_db``):
+    a developer hitting ``localhost:3001`` while logged in as the admin user
+    would otherwise stamp ``172.19.0.1`` (docker default gateway) onto that
+    user's row, which is meaningless for production audit.
+    """
     active_session = db.query(LoginSession).filter(
         LoginSession.user_id == user_id,
         LoginSession.is_active.is_(True),
     ).first()
     user_dict["online"] = active_session is not None
 
+    # Walk most-recent sessions and pick the first non-private IP. Fall back to
+    # whatever the latest session has (even private) if every session is local,
+    # so the column isn't blank for genuinely-local-only test accounts.
     last_session = db.query(LoginSession).filter(
         LoginSession.user_id == user_id,
     ).order_by(LoginSession.last_active_at.desc()).first()
-    user_dict["login_ip"] = last_session.ip_address if last_session else None
+    fallback_ip = last_session.ip_address if last_session else None
+
+    recent_sessions = db.query(LoginSession).filter(
+        LoginSession.user_id == user_id,
+    ).order_by(LoginSession.last_active_at.desc()).limit(20).all()
+    # Unit tests use MagicMock query chains; keep the helper robust when .all()
+    # is not configured to return a real list.
+    if not isinstance(recent_sessions, list):
+        recent_sessions = []
+    chosen_ip = None
+    for s in recent_sessions:
+        ip = getattr(s, "ip_address", None)
+        if ip and not _is_private(ip):
+            chosen_ip = ip
+            break
+    user_dict["login_ip"] = chosen_ip or fallback_ip
 
     return user_dict
 
@@ -46,7 +73,8 @@ async def list_users(
     db: Session = Depends(get_db),
     admin: User = Depends(require_admin),
 ):
-    q = db.query(User).order_by(User.created_at.desc())
+    # Soft-deleted users (deleted_at IS NOT NULL) are hidden by default.
+    q = db.query(User).filter(User.deleted_at.is_(None)).order_by(User.created_at.desc())
     if keyword:
         q = q.filter(User.phone.ilike(f"%{keyword}%"))
     total = q.count()
@@ -105,3 +133,32 @@ async def force_logout(user_id: int, db: Session = Depends(get_db), admin: User 
     audit(db, admin.id, user.id, "force_logout")
     db.commit(); db.refresh(user)
     return ok(user.to_dict(), "已强制登出")
+
+
+@router.delete("/{user_id}")
+async def delete_user(user_id: int, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    """Soft-delete a user: set ``deleted_at`` + invalidate sessions/tokens.
+
+    Associated data (visit_events / download_records / login_sessions /
+    admin_audit_log) is preserved for audit history. The user is hidden from
+    the admin list and cannot log in (the auth_service login path also
+    refuses if ``deleted_at`` is set).
+    """
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(404, "用户不存在")
+    if user.deleted_at is not None:
+        raise HTTPException(409, "用户已删除")
+    if user.id == admin.id:
+        raise HTTPException(400, "不能删除当前登录的管理员账号")
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    user.deleted_at = now
+    user.is_active = False
+    user.tokens_invalidated_at = now
+    db.query(LoginSession).filter(LoginSession.user_id == user_id, LoginSession.is_active.is_(True)).update(
+        {"is_active": False}, synchronize_session=False
+    )
+    audit(db, admin.id, user.id, "delete", {"phone": user.phone})
+    db.commit()
+    db.refresh(user)
+    return ok(user.to_dict(), "已删除")
