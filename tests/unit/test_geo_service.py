@@ -32,7 +32,7 @@ def test_lookup_point_province_country_unknown():
     assert cn["country_code"] == "CN"
     assert (round(cn["lat"], 2), round(cn["lng"], 2)) == (30.57, 104.07)
 
-    us = lookup_point("United States", "US")
+    us = lookup_point("美国", "US")
     assert us["country_code"] == "US" and us["lat"] == 37.0902
 
     local = lookup_point("本地开发", "LOCAL")
@@ -69,4 +69,4 @@ def test_resolve_public_foreign_ip():
         pytest.skip("ip2region xdb / py-ip2region not available")
     r = resolve_ip_geo("8.8.8.8")
     assert r["country_code"] == "US"
-    assert r["name"] == "United States"
+    assert r["name"] == "美国"
