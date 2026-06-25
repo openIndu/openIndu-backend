@@ -426,7 +426,8 @@ async def login_history(
         "username": mask_phone(phone) or f"ID:{session.user_id}",
         "ip": session.ip_address,
         "location": session.geo_location or "未知",
-        "login_time": session.last_active_at.isoformat() if session.last_active_at else None,
+        # stored as naive UTC; mark as UTC so the browser doesn't reinterpret as local time
+        "login_time": session.last_active_at.replace(tzinfo=timezone.utc).isoformat() if session.last_active_at else None,
         "is_active": session.is_active,
     } for session, phone in rows]
     return ok({"items": items, "total": total, "page": page, "size": size})
@@ -439,13 +440,16 @@ async def visit_logs(
     keyword: str | None = Query(None),       # matches masked phone's source or IP
     authed: str | None = Query(None),         # 'yes' (登录) | 'no' (匿名) | None
     include_local: bool = Query(False),       # 本地开发 / 内网访问默认隐藏
+    include_unknown: bool = Query(False),     # geo='未知' (无法解析) 默认隐藏
     db: Session = Depends(get_db),
     admin: User = Depends(require_admin),
 ):
     """Visit log (anonymous + authenticated), newest first.
 
-    Backed by visit_events. "本地开发" (private/loopback) visits are hidden unless
-    include_local=true. Search matches phone or IP; authed filters logged-in vs anon.
+    Backed by visit_events. "本地开发" (private/loopback) and "未知" (unresolvable)
+    visits are hidden unless include_local / include_unknown is true — matches
+    the dashboard map's filter so both views agree on what counts as a visit.
+    Search matches phone or IP; authed filters logged-in vs anon.
     """
     q = (
         db.query(VisitEvent, User.phone)
@@ -454,6 +458,8 @@ async def visit_logs(
     )
     if not include_local:
         q = q.filter(VisitEvent.geo_location.is_distinct_from("本地开发"))
+    if not include_unknown:
+        q = q.filter(VisitEvent.geo_location.is_distinct_from("未知"))
     if keyword:
         like = f"%{keyword.strip()}%"
         q = q.filter(or_(User.phone.ilike(like), VisitEvent.ip_address.ilike(like)))
@@ -471,6 +477,7 @@ async def visit_logs(
         "location": ev.geo_location or "未知",
         "path": ev.path,
         "is_authenticated": ev.is_authenticated,
-        "time": ev.created_at.isoformat() if ev.created_at else None,
+        # stored as naive UTC; mark as UTC so the browser doesn't reinterpret as local time
+        "time": ev.created_at.replace(tzinfo=timezone.utc).isoformat() if ev.created_at else None,
     } for ev, phone in rows]
     return ok({"items": items, "total": total, "page": page, "size": size})
