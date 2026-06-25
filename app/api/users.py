@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_db, require_admin
-from app.core.utils import _is_private, ok
+from app.core.utils import _is_private, mask_phone, ok
 from app.models.admin_audit_log import AdminAuditLog
 from app.models.login_session import LoginSession
 from app.models.user import User
@@ -162,7 +162,7 @@ async def delete_user(user_id: int, db: Session = Depends(get_db), admin: User =
     db.query(LoginSession).filter(LoginSession.user_id == user_id, LoginSession.is_active.is_(True)).update(
         {"is_active": False}, synchronize_session=False
     )
-    audit(db, admin.id, user.id, "delete", {"phone": user.phone})
+    audit(db, admin.id, user.id, "delete", {"phone": mask_phone(user.phone)})
     db.commit()
     db.refresh(user)
     return ok(user.to_dict(), "已删除")
