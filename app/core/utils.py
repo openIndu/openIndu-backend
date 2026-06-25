@@ -44,6 +44,22 @@ def mask_phone(phone: str | None) -> str | None:
     return s
 
 
+# Any 11-digit mainland mobile number (1 + 10 digits) embedded in free text.
+_PHONE_IN_TEXT_RE = re.compile(r"(?<!\d)(1\d{2})(\d{4})(\d{4})(?!\d)")
+
+
+def mask_phones_in_text(text: str | None) -> str | None:
+    """Mask every 11-digit phone number embedded in an arbitrary string.
+
+    Used for audit-log ``detail`` blobs, which may carry a phone in JSON-ish
+    text (e.g. ``{'phone': '13000000000'}``). Each match becomes ``138****0000``.
+    The negative look-arounds keep us from chopping into longer digit runs.
+    """
+    if not text:
+        return text
+    return _PHONE_IN_TEXT_RE.sub(lambda m: f"{m.group(1)}****{m.group(3)}", text)
+
+
 def ok(data=None, message: str = "操作成功"):
     """Standard success envelope shared by all API routers.
 
