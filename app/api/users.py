@@ -23,11 +23,11 @@ def audit(db: Session, admin_id: int, target_user_id: int, action: str, detail: 
 
 
 def _enrich_user_dict(db: Session, user_dict: dict, user_id: int) -> dict:
-    """Add online status and last public login IP to user dict.
+    """Add online status and last public login IP/location to user dict.
 
-    The IP picked is the last session whose ``ip_address`` is a real (public)
-    address — private / loopback / docker-bridge IPs are skipped so the admin
-    UI doesn't display dev-stack noise. This matters because the local dev
+    The session picked is the last session whose ``ip_address`` is a real
+    (public) address — private / loopback / docker-bridge IPs are skipped so the
+    admin UI doesn't display dev-stack noise. This matters because the local dev
     stack points at the production DB (see ``project_local_stack_remote_db``):
     a developer hitting ``localhost:3001`` while logged in as the admin user
     would otherwise stamp ``172.19.0.1`` (docker default gateway) onto that
@@ -46,6 +46,7 @@ def _enrich_user_dict(db: Session, user_dict: dict, user_id: int) -> dict:
         LoginSession.user_id == user_id,
     ).order_by(LoginSession.last_active_at.desc()).first()
     fallback_ip = last_session.ip_address if last_session else None
+    fallback_location = getattr(last_session, "geo_location", None) if last_session else None
 
     recent_sessions = db.query(LoginSession).filter(
         LoginSession.user_id == user_id,
@@ -55,12 +56,15 @@ def _enrich_user_dict(db: Session, user_dict: dict, user_id: int) -> dict:
     if not isinstance(recent_sessions, list):
         recent_sessions = []
     chosen_ip = None
+    chosen_location = None
     for s in recent_sessions:
         ip = getattr(s, "ip_address", None)
         if ip and not _is_private(ip):
             chosen_ip = ip
+            chosen_location = getattr(s, "geo_location", None)
             break
     user_dict["login_ip"] = chosen_ip or fallback_ip
+    user_dict["login_location"] = chosen_location or fallback_location
 
     return user_dict
 
