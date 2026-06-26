@@ -86,7 +86,6 @@ async def list_software(brand: str | None = None, category: str | None = None, k
                 "original_name": v.original_name or s.original_name,
                 "brand": s.brand,
                 "category": s.category,
-                "series": s.series,
                 "description": s.description,
                 "created_at": iso_utc(s.created_at),
                 "version_id": v.id,

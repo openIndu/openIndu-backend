@@ -9,7 +9,7 @@ class ResourceTag(Base):
     __tablename__ = "resource_tags"
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
-    type = Column(String(20), nullable=False, index=True)    # brand | doc_category | sw_category | doc_series | sw_series
+    type = Column(String(20), nullable=False, index=True)    # doc_brand | sw_brand | doc_category | sw_category | doc_series
     value = Column(String(100), nullable=False)               # slug used in DB (e.g. siemens, fx)
     label_zh = Column(String(200), nullable=False)            # Chinese display name
     parent_value = Column(String(100), nullable=True, index=True)  # parent category value for series
