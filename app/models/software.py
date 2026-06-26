@@ -14,7 +14,6 @@ class Software(Base):
     original_name = Column(String(500), nullable=False)
     brand = Column(String(50), nullable=False, index=True)
     category = Column(String(50), nullable=False, index=True)
-    series = Column(String(100), nullable=True, index=True)
     latest_version = Column(String(100), nullable=True)
     download_count = Column(Integer, nullable=False, default=0)
     description = Column(Text, nullable=True)
@@ -40,7 +39,6 @@ class Software(Base):
             "original_name": self.original_name,
             "brand": self.brand,
             "category": self.category,
-            "series": self.series,
             "latest_version": self.latest_version,
             "latest_version_size": latest_size,
             "versions_count": len(self.versions),

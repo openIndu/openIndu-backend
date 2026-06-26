@@ -13,6 +13,7 @@ from fastapi import HTTPException
 def _chain(items=None, first=None, count=0):
     q = MagicMock()
     q.filter.return_value = q
+    q.join.return_value = q
     q.order_by.return_value = q
     q.offset.return_value = q
     q.limit.return_value = q
@@ -137,6 +138,56 @@ def test_series_tags_require_brand_and_global_unique_value():
     with pytest.raises(HTTPException) as exc:
         asyncio.run(tags.create_tag(body, db, _user()))
     assert exc.value.status_code == 409
+
+
+def test_software_responses_do_not_expose_legacy_series():
+    from app.api import software
+    from app.models.software import Software
+
+    sw = Software(filename="tool.zip", original_name="Tool.zip", brand="siemens", category="utility")
+    sw.id = 1
+    sw.versions = []
+    data = sw.to_dict()
+    assert "series" not in data
+
+    version = SimpleNamespace(
+        id=10,
+        software_id=1,
+        software=SimpleNamespace(
+            id=1,
+            brand="siemens",
+            category="utility",
+            description="desc",
+            created_at=datetime(2026, 1, 1),
+            latest_version="1.0",
+        ),
+        oss_key="soft/tool.zip",
+        original_name="Tool.zip",
+        version="1.0",
+        file_size=100,
+        file_hash="abc",
+        upload_time=datetime(2026, 1, 1),
+        download_count=0,
+        is_published=True,
+    )
+    db = MagicMock()
+    db.query.return_value = _chain(items=[version], count=1)
+    result = asyncio.run(software.list_software(expand_versions=True, page=1, size=20, db=db))
+    assert "series" not in result["data"]["items"][0]
+
+
+def test_sw_series_tag_type_is_rejected():
+    from app.api import tags
+
+    db = MagicMock()
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(tags.list_tags(type="sw_series", db=db))
+    assert exc.value.status_code == 400
+
+    body = tags.CreateTagBody(type="sw_series", value="obsolete", label_zh="Obsolete")
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(tags.create_tag(body, db, _user()))
+    assert exc.value.status_code == 400
 
 
 @pytest.mark.parametrize("filename,expected", [("setup.exe", ".exe"), ("archive", "")])
