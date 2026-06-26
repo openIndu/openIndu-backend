@@ -20,7 +20,7 @@ def client_ip(request: Request) -> str:
 
 class VisitBody(BaseModel):
     path: str = "/"
-    visitor_id: str | None = None
+    client_id: str | None = None
     event_type: str = "page_view"
 
 
@@ -51,7 +51,7 @@ async def track_visit(body: VisitBody, request: Request, db: Session = Depends(g
             user_id = None
     event = VisitEvent(
         ip_address=ip,
-        visitor_id=_safe_id(body.visitor_id),
+        client_id=_safe_id(body.client_id),
         event_type="page_view",
         user_agent=ua,
         path=body.path[:512] or "/",

@@ -9,9 +9,9 @@ class VisitEvent(Base):
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     ip_address = Column(String(64), nullable=False, index=True)
-    # Browser-scoped anonymous visitor id. New PV/UV metrics prefer this over IP;
-    # historical rows without it fall back to ip_address.
-    visitor_id = Column(String(64), nullable=True, index=True)
+    # Browser/client scoped id. Unified across PV/UV analytics and login
+    # sessions; historical rows without it fall back to ip_address for UV.
+    client_id = Column(String(64), nullable=True, index=True)
     event_type = Column(String(32), nullable=False, default="page_view", index=True)
     user_agent = Column(String(512), nullable=False, default="")
     path = Column(String(512), nullable=False, default="/")
