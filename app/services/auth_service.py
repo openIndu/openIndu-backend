@@ -231,11 +231,17 @@ class AuthService:
         self.blacklist_token(db, payload, reason="refresh_rotation")
         return {"user": user.to_dict(), "tokens": self.create_token_pair(user)}
 
-    def logout(self, db: Session, token: str, user_agent: str | None = None) -> None:
+    def logout(self, db: Session, token: str, user_agent: str | None = None, client_id: str | None = None) -> None:
         payload = decode_token(token)
         self.blacklist_token(db, payload, reason="logout")
         user_id = payload.get("sub")
-        if user_id and user_agent:
+        if user_id and client_id:
+            db.query(LoginSession).filter(
+                LoginSession.user_id == int(user_id),
+                LoginSession.client_id == client_id,
+            ).update({"is_active": False})
+            db.commit()
+        elif user_id and user_agent:
             db.query(LoginSession).filter(
                 LoginSession.user_id == int(user_id),
                 LoginSession.user_agent == user_agent,
