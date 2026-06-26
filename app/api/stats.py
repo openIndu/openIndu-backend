@@ -48,8 +48,8 @@ def _month_range_utc() -> tuple[datetime, datetime]:
 
 
 def _visitor_key():
-    """Browser visitor key for UV: visitor_id first, historical rows by IP."""
-    return func.coalesce(VisitEvent.visitor_id, func.concat("ip:", VisitEvent.ip_address))
+    """Browser visitor key for UV: client_id first, historical rows by IP."""
+    return func.coalesce(VisitEvent.client_id, func.concat("ip:", VisitEvent.ip_address))
 
 
 def _quality_visit_query(db: Session):
@@ -206,7 +206,7 @@ async def dashboard_stats(db: Session = Depends(get_db), admin: User = Depends(r
         LoginSession.is_active.is_(True)
     ).scalar() or 0
 
-    # Backward-compatible visitor fields now map to UV (visitor_id-first,
+    # Backward-compatible visitor fields now map to UV (client_id-first,
     # historical IP fallback) and use the same dashboard quality filters.
     current_total_visitors = current_5m_uv
 
@@ -229,7 +229,7 @@ async def dashboard_stats(db: Session = Depends(get_db), admin: User = Depends(r
 
     month_active_users = month_uv
 
-    # Cumulative across all time — UV (visitor_id first, historical IP fallback).
+    # Cumulative across all time — UV (client_id first, historical IP fallback).
     total_visitors = total_uv
 
     month_new_users = db.query(func.count(User.id)).filter(
@@ -298,7 +298,7 @@ async def dashboard_stats(db: Session = Depends(get_db), admin: User = Depends(r
     for item in monthly_pv:
         item["count"] = pv_map.get(item["date"], 0)
 
-    # Unique visitors (UV) per day — visitor_id first, historical IP fallback.
+    # Unique visitors (UV) per day — client_id first, historical IP fallback.
     uv_month_rows = (
         db.query(
             func.date(VisitEvent.created_at).label("day"),
@@ -415,7 +415,7 @@ async def dashboard_stats(db: Session = Depends(get_db), admin: User = Depends(r
         for yy, mm in months
     ]
 
-    # Last 12 months, unique visitors (UV), visitor_id first with IP fallback.
+    # Last 12 months, unique visitors (UV), client_id first with IP fallback.
     yearly_uv_rows = (
         db.query(
             func.to_char(VisitEvent.created_at, "YYYY-MM").label("ym"),

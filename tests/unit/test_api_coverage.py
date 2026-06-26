@@ -471,18 +471,18 @@ def test_update_me_helper():
     db.refresh.assert_called_once_with(user)
 
 
-def test_visit_tracking_records_visitor_id_and_event_type(monkeypatch):
+def test_visit_tracking_records_client_id_and_event_type(monkeypatch):
     from app.api import visits
 
     monkeypatch.setattr(visits, "resolve_ip_geo", lambda ip: {"name": "成都", "country_code": "CN"})
     db = MagicMock()
-    body = visits.VisitBody(path="/resources", visitor_id="visitor-123", event_type="page_view")
+    body = visits.VisitBody(path="/resources", client_id="client-123", event_type="page_view")
     result = asyncio.run(visits.track_visit(body, _Request("8.8.8.8"), db))
 
     assert result["data"]["tracked"] is True
     event = db.add.call_args.args[0]
     assert event.ip_address == "8.8.8.8"
-    assert event.visitor_id == "visitor-123"
+    assert event.client_id == "client-123"
     assert event.event_type == "page_view"
     assert event.path == "/resources"
 
@@ -490,7 +490,7 @@ def test_visit_tracking_records_visitor_id_and_event_type(monkeypatch):
 def test_visit_tracking_rejects_unknown_event_type():
     from app.api import visits
 
-    body = visits.VisitBody(path="/", visitor_id="visitor-123", event_type="click")
+    body = visits.VisitBody(path="/", client_id="client-123", event_type="click")
     with pytest.raises(HTTPException) as exc:
         asyncio.run(visits.track_visit(body, _Request("8.8.8.8"), MagicMock()))
     assert exc.value.status_code == 400
