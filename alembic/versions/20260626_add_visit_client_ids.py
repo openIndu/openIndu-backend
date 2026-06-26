@@ -4,6 +4,12 @@ Adds browser-scoped visitor_id to visit_events for PV/UV metrics and
 client_id to login_sessions for accurate same-browser account switching. The
 old IP/User-Agent fallback remains for historical rows and old clients.
 
+The legacy unique constraint uq_login_session_device (user_id, ip_address,
+user_agent) is dropped: with client_id now identifying a browser, two sessions
+for the same user from the same IP+UA but different browsers/clients must be
+allowed to coexist, and the old constraint would otherwise UniqueViolation the
+new-row path whenever a historical (user_id, ip, ua) row already exists.
+
 Revision ID: 20260626_add_visit_client_ids
 Revises: 20260626_remove_software_series
 Create Date: 2026-06-26 00:00:00.000000
@@ -26,9 +32,13 @@ def upgrade() -> None:
 
     op.execute("ALTER TABLE login_sessions ADD COLUMN IF NOT EXISTS client_id VARCHAR(64)")
     op.execute("CREATE INDEX IF NOT EXISTS ix_login_sessions_client_id ON login_sessions (client_id)")
+    # Drop the legacy (user_id, ip_address, user_agent) unique constraint so the
+    # client_id-aware session upsert can coexist with historical rows.
+    op.execute("ALTER TABLE login_sessions DROP CONSTRAINT IF EXISTS uq_login_session_device")
 
 
 def downgrade() -> None:
+    op.execute("ALTER TABLE login_sessions ADD CONSTRAINT uq_login_session_device UNIQUE (user_id, ip_address, user_agent)")
     op.execute("DROP INDEX IF EXISTS ix_login_sessions_client_id")
     op.execute("ALTER TABLE login_sessions DROP COLUMN IF EXISTS client_id")
 
