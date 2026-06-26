@@ -471,9 +471,32 @@ def test_update_me_helper():
     db.refresh.assert_called_once_with(user)
 
 
+def test_visit_tracking_records_visitor_id_and_event_type(monkeypatch):
+    from app.api import visits
+
+    monkeypatch.setattr(visits, "resolve_ip_geo", lambda ip: {"name": "成都", "country_code": "CN"})
+    db = MagicMock()
+    body = visits.VisitBody(path="/resources", visitor_id="visitor-123", event_type="page_view")
+    result = asyncio.run(visits.track_visit(body, _Request("8.8.8.8"), db))
+
+    assert result["data"]["tracked"] is True
+    event = db.add.call_args.args[0]
+    assert event.ip_address == "8.8.8.8"
+    assert event.visitor_id == "visitor-123"
+    assert event.event_type == "page_view"
+    assert event.path == "/resources"
+
+
+def test_visit_tracking_rejects_unknown_event_type():
+    from app.api import visits
+
+    body = visits.VisitBody(path="/", visitor_id="visitor-123", event_type="click")
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(visits.track_visit(body, _Request("8.8.8.8"), MagicMock()))
+    assert exc.value.status_code == 400
+
 def test_auth_service_validate_phone(monkeypatch):
     from app.services.auth_service import AuthService
-    from fastapi import HTTPException
 
     with pytest.raises(HTTPException):
         AuthService._validate_phone("1234")
@@ -581,6 +604,8 @@ def test_auth_service_refresh(monkeypatch):
 
 
 def test_auth_service_logout(monkeypatch):
+    from jose import jwt
+
     from app.services.auth_service import AuthService
 
     monkeypatch.setattr("app.services.auth_service.settings", SimpleNamespace(
@@ -590,6 +615,18 @@ def test_auth_service_logout(monkeypatch):
 
     service = AuthService()
     db = MagicMock()
+    q = _chain(first=None)
+    db.query.return_value = q
+    token = jwt.encode(
+        {"sub": "7", "type": "access", "jti": "logout-jti", "exp": int(datetime.now().timestamp()) + 3600},
+        "test-key-123",
+        algorithm="HS256",
+    )
+
+    service.logout(db, token, user_agent="UA", client_id="client-1")
+
+    q.update.assert_called_with({"is_active": False})
+    db.commit.assert_called()
 
 
 def test_decode_token(monkeypatch):

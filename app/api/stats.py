@@ -47,6 +47,38 @@ def _month_range_utc() -> tuple[datetime, datetime]:
     return (_to_naive_utc(start_cst), _to_naive_utc(end_cst))
 
 
+def _visitor_key():
+    """Browser visitor key for UV: visitor_id first, historical rows by IP."""
+    return func.coalesce(VisitEvent.visitor_id, func.concat("ip:", VisitEvent.ip_address))
+
+
+def _quality_visit_query(db: Session):
+    """Default dashboard visit scope: real page views, excluding local/unknown."""
+    return db.query(VisitEvent).filter(
+        VisitEvent.event_type == "page_view",
+        VisitEvent.geo_location.is_distinct_from("本地开发"),
+        VisitEvent.geo_location.is_distinct_from("未知"),
+    )
+
+
+def _pv_count(db: Session, start: datetime | None = None, end: datetime | None = None) -> int:
+    q = _quality_visit_query(db)
+    if start is not None:
+        q = q.filter(VisitEvent.created_at >= start)
+    if end is not None:
+        q = q.filter(VisitEvent.created_at < end)
+    return q.with_entities(func.count(VisitEvent.id)).scalar() or 0
+
+
+def _uv_count(db: Session, start: datetime | None = None, end: datetime | None = None) -> int:
+    q = _quality_visit_query(db)
+    if start is not None:
+        q = q.filter(VisitEvent.created_at >= start)
+    if end is not None:
+        q = q.filter(VisitEvent.created_at < end)
+    return q.with_entities(func.count(func.distinct(_visitor_key()))).scalar() or 0
+
+
 @router.get("/dashboard")
 async def dashboard_stats(db: Session = Depends(get_db), admin: User = Depends(require_admin)):
     now = _now()
@@ -59,6 +91,7 @@ async def dashboard_stats(db: Session = Depends(get_db), admin: User = Depends(r
     new_users_30d = db.query(func.count(User.id)).filter(User.created_at >= thirty_days_ago).scalar() or 0
     visitors_30d = db.query(func.count(func.distinct(VisitEvent.ip_address))).filter(VisitEvent.created_at >= thirty_days_ago).scalar() or 0
     online_count = db.query(func.count(func.distinct(LoginSession.user_id))).filter(LoginSession.is_active.is_(True)).scalar() or 0
+    online_clients = db.query(func.count(func.distinct(LoginSession.client_id))).filter(LoginSession.is_active.is_(True), LoginSession.client_id.isnot(None)).scalar() or 0
     online_visitors = db.query(func.count(func.distinct(VisitEvent.ip_address))).filter(VisitEvent.created_at >= online_cutoff).scalar() or 0
     anonymous_online = max(online_visitors - online_count, 0)
 
@@ -92,6 +125,15 @@ async def dashboard_stats(db: Session = Depends(get_db), admin: User = Depends(r
     # ---- period stats: today / this month (Asia/Shanghai) ----
     today_start, today_end = _today_range_utc()
     month_start, month_end = _month_range_utc()
+
+    total_pv = _pv_count(db)
+    total_uv = _uv_count(db)
+    today_pv = _pv_count(db, today_start, today_end)
+    today_uv = _uv_count(db, today_start, today_end)
+    month_pv = _pv_count(db, month_start, month_end)
+    month_uv = _uv_count(db, month_start, month_end)
+    current_5m_pv = _pv_count(db, online_cutoff)
+    current_5m_uv = _uv_count(db, online_cutoff)
 
     # Geo distribution — based on this-month visit_events, split cleanly by
     # whether the visit was authenticated. Anonymous and authenticated buckets
@@ -164,21 +206,11 @@ async def dashboard_stats(db: Session = Depends(get_db), admin: User = Depends(r
         LoginSession.is_active.is_(True)
     ).scalar() or 0
 
-    # Real-time visitor count: distinct IPs with a visit_event in the last 5 minutes
-    # (anonymous + authenticated). 本地开发 / 内网 IPs are excluded so dev self-traffic
-    # doesn't inflate the dashboard's "right now" reading.
-    five_min_ago = _to_naive_utc(datetime.now(CST) - timedelta(minutes=5))
-    current_total_visitors = db.query(
-        func.count(func.distinct(VisitEvent.ip_address))
-    ).filter(
-        VisitEvent.created_at >= five_min_ago,
-        VisitEvent.geo_location.is_distinct_from("本地开发"),
-    ).scalar() or 0
+    # Backward-compatible visitor fields now map to UV (visitor_id-first,
+    # historical IP fallback) and use the same dashboard quality filters.
+    current_total_visitors = current_5m_uv
 
-    today_active_users = db.query(func.count(func.distinct(VisitEvent.ip_address))).filter(
-        VisitEvent.created_at >= today_start,
-        VisitEvent.created_at < today_end,
-    ).scalar() or 0
+    today_active_users = today_uv
 
     today_new_users = db.query(func.count(User.id)).filter(
         User.created_at >= today_start,
@@ -195,14 +227,10 @@ async def dashboard_stats(db: Session = Depends(get_db), admin: User = Depends(r
         Software.created_at < today_end,
     ).scalar() or 0
 
-    month_active_users = db.query(func.count(func.distinct(VisitEvent.ip_address))).filter(
-        VisitEvent.created_at >= month_start,
-        VisitEvent.created_at < month_end,
-    ).scalar() or 0
+    month_active_users = month_uv
 
-    # Cumulative across all time — answers "how many distinct visitors have ever
-    # reached the site?" Anonymous + authenticated together, deduped by IP.
-    total_visitors = db.query(func.count(func.distinct(VisitEvent.ip_address))).scalar() or 0
+    # Cumulative across all time — UV (visitor_id first, historical IP fallback).
+    total_visitors = total_uv
 
     month_new_users = db.query(func.count(User.id)).filter(
         User.created_at >= month_start,
@@ -226,12 +254,16 @@ async def dashboard_stats(db: Session = Depends(get_db), admin: User = Depends(r
 
     monthly_registrations: list[dict[str, int | str]] = []
     monthly_visitors: list[dict[str, int | str]] = []
+    monthly_pv: list[dict[str, int | str]] = []
+    monthly_uv: list[dict[str, int | str]] = []
     monthly_anon_visitors: list[dict[str, int | str]] = []
     for i in range(month_days):
         day_date = month_start_cst_date + timedelta(days=i)
         date_str = str(day_date)
         monthly_registrations.append({"date": date_str, "count": 0})
         monthly_visitors.append({"date": date_str, "count": 0})
+        monthly_pv.append({"date": date_str, "count": 0})
+        monthly_uv.append({"date": date_str, "count": 0})
         monthly_anon_visitors.append({"date": date_str, "count": 0})
 
     reg_month_rows = (
@@ -245,15 +277,16 @@ async def dashboard_stats(db: Session = Depends(get_db), admin: User = Depends(r
     for item in monthly_registrations:
         item["count"] = reg_map.get(item["date"], 0)
 
-    # All visits (anon + authenticated), deduped by IP per day — this replaces
-    # the previous "logged-in only" series, which was always near zero because
-    # the bulk of traffic is anonymous.
-    visit_month_rows = (
+    # All page views (PV) per day.
+    pv_month_rows = (
         db.query(
             func.date(VisitEvent.created_at).label("day"),
-            func.count(func.distinct(VisitEvent.ip_address)).label("cnt"),
+            func.count(VisitEvent.id).label("cnt"),
         )
         .filter(
+            VisitEvent.event_type == "page_view",
+            VisitEvent.geo_location.is_distinct_from("本地开发"),
+            VisitEvent.geo_location.is_distinct_from("未知"),
             VisitEvent.created_at >= month_start,
             VisitEvent.created_at < month_end,
         )
@@ -261,7 +294,30 @@ async def dashboard_stats(db: Session = Depends(get_db), admin: User = Depends(r
         .order_by(func.date(VisitEvent.created_at))
         .all()
     )
-    visit_map = {str(r.day): r.cnt for r in visit_month_rows}
+    pv_map = {str(r.day): r.cnt for r in pv_month_rows}
+    for item in monthly_pv:
+        item["count"] = pv_map.get(item["date"], 0)
+
+    # Unique visitors (UV) per day — visitor_id first, historical IP fallback.
+    uv_month_rows = (
+        db.query(
+            func.date(VisitEvent.created_at).label("day"),
+            func.count(func.distinct(_visitor_key())).label("cnt"),
+        )
+        .filter(
+            VisitEvent.event_type == "page_view",
+            VisitEvent.geo_location.is_distinct_from("本地开发"),
+            VisitEvent.geo_location.is_distinct_from("未知"),
+            VisitEvent.created_at >= month_start,
+            VisitEvent.created_at < month_end,
+        )
+        .group_by(func.date(VisitEvent.created_at))
+        .order_by(func.date(VisitEvent.created_at))
+        .all()
+    )
+    visit_map = {str(r.day): r.cnt for r in uv_month_rows}
+    for item in monthly_uv:
+        item["count"] = visit_map.get(item["date"], 0)
     for item in monthly_visitors:
         item["count"] = visit_map.get(item["date"], 0)
 
@@ -338,30 +394,60 @@ async def dashboard_stats(db: Session = Depends(get_db), admin: User = Depends(r
         for yy, mm in months
     ]
 
-    # Last 12 months, all visits (anon + authenticated), deduped by ip_address.
-    yearly_all_rows = (
+    # Last 12 months, all page views (PV).
+    yearly_pv_rows = (
         db.query(
             func.to_char(VisitEvent.created_at, "YYYY-MM").label("ym"),
-            func.count(func.distinct(VisitEvent.ip_address)).label("cnt"),
+            func.count(VisitEvent.id).label("cnt"),
         )
-        .filter(VisitEvent.created_at >= year_start_utc)
+        .filter(
+            VisitEvent.event_type == "page_view",
+            VisitEvent.geo_location.is_distinct_from("本地开发"),
+            VisitEvent.geo_location.is_distinct_from("未知"),
+            VisitEvent.created_at >= year_start_utc,
+        )
         .group_by("ym")
         .all()
     )
-    yearly_all_map = {r.ym: r.cnt for r in yearly_all_rows}
-    yearly_visitors = [
+    yearly_pv_map = {r.ym: r.cnt for r in yearly_pv_rows}
+    yearly_pv = [
+        {"date": f"{yy:04d}-{mm:02d}", "count": yearly_pv_map.get(f"{yy:04d}-{mm:02d}", 0)}
+        for yy, mm in months
+    ]
+
+    # Last 12 months, unique visitors (UV), visitor_id first with IP fallback.
+    yearly_uv_rows = (
+        db.query(
+            func.to_char(VisitEvent.created_at, "YYYY-MM").label("ym"),
+            func.count(func.distinct(_visitor_key())).label("cnt"),
+        )
+        .filter(
+            VisitEvent.event_type == "page_view",
+            VisitEvent.geo_location.is_distinct_from("本地开发"),
+            VisitEvent.geo_location.is_distinct_from("未知"),
+            VisitEvent.created_at >= year_start_utc,
+        )
+        .group_by("ym")
+        .all()
+    )
+    yearly_all_map = {r.ym: r.cnt for r in yearly_uv_rows}
+    yearly_uv = [
         {"date": f"{yy:04d}-{mm:02d}", "count": yearly_all_map.get(f"{yy:04d}-{mm:02d}", 0)}
         for yy, mm in months
     ]
+    yearly_visitors = yearly_uv
 
     return ok({
         "total_users": total_users,
         "total_docs": total_docs,
         "total_software": total_software,
         "total_visitors": total_visitors,
+        "total_pv": total_pv,
+        "total_uv": total_uv,
         "new_users_30d": new_users_30d,
         "visitors_30d": visitors_30d,
         "online_count": online_count,
+        "online_clients": online_clients,
         "online_visitors": online_visitors,
         "anonymous_online": anonymous_online,
         "daily_registrations": daily_registrations,
@@ -371,20 +457,30 @@ async def dashboard_stats(db: Session = Depends(get_db), admin: User = Depends(r
         # period stats
         "current_active_users": current_active_users,
         "current_total_visitors": current_total_visitors,
+        "current_5m_pv": current_5m_pv,
+        "current_5m_uv": current_5m_uv,
         "today_active_users": today_active_users,
+        "today_pv": today_pv,
+        "today_uv": today_uv,
         "today_new_users": today_new_users,
         "today_new_docs": today_new_docs,
         "today_new_software": today_new_software,
         "month_active_users": month_active_users,
+        "month_pv": month_pv,
+        "month_uv": month_uv,
         "month_new_users": month_new_users,
         "month_new_docs": month_new_docs,
         "month_new_software": month_new_software,
         "monthly_registrations": monthly_registrations,
         "monthly_visitors": monthly_visitors,
+        "monthly_pv": monthly_pv,
+        "monthly_uv": monthly_uv,
         "monthly_anon_visitors": monthly_anon_visitors,
         "monthly_login_visitors": monthly_login_visitors,
         "yearly_anon_visitors": yearly_anon_visitors,
         "yearly_visitors": yearly_visitors,
+        "yearly_pv": yearly_pv,
+        "yearly_uv": yearly_uv,
     })
 
 
@@ -396,7 +492,12 @@ async def online(db: Session = Depends(get_db), admin: User = Depends(require_ad
         key = s.geo_location or "unknown"
         geo[key] = geo.get(key, 0) + 1
     geo_list = [{"name": k, "count": v} for k, v in geo.items()]
-    return ok({"online_users": len({s.user_id for s in sessions}), "sessions": len(sessions), "geo_distribution": geo_list})
+    return ok({
+        "online_users": len({s.user_id for s in sessions}),
+        "online_clients": len({s.client_id for s in sessions if getattr(s, "client_id", None)}),
+        "sessions": len(sessions),
+        "geo_distribution": geo_list,
+    })
 
 
 @router.get("/login-history")

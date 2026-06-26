@@ -96,7 +96,8 @@ async def update_me(body: ProfileUpdateRequest, db: Session = Depends(get_db), c
 @router.post("/logout")
 async def logout(request: Request, credentials: HTTPAuthorizationCredentials = Depends(security), db: Session = Depends(get_db), current_user: User = Depends(require_auth)):
     ua = request.headers.get("user-agent", "")[:512]
-    auth_service.logout(db, credentials.credentials, user_agent=ua)
+    client_id = (request.headers.get("x-openindu-client-id") or "").strip()[:64] or None
+    auth_service.logout(db, credentials.credentials, user_agent=ua, client_id=client_id)
     return ok(message="已登出")
 
 

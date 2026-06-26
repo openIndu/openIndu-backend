@@ -1,5 +1,5 @@
 """Visit tracking API for dashboard analytics."""
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from jose import JWTError
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -20,10 +20,23 @@ def client_ip(request: Request) -> str:
 
 class VisitBody(BaseModel):
     path: str = "/"
+    visitor_id: str | None = None
+    event_type: str = "page_view"
+
+
+def _safe_id(value: str | None) -> str | None:
+    if not value:
+        return None
+    value = value.strip()
+    if not value:
+        return None
+    return value[:64]
 
 
 @router.post("/track")
 async def track_visit(body: VisitBody, request: Request, db: Session = Depends(get_db)):
+    if body.event_type != "page_view":
+        raise HTTPException(400, "不支持的访问事件类型")
     ip = client_ip(request)
     ua = request.headers.get("user-agent", "")[:512]
     geo = resolve_ip_geo(ip)
@@ -34,10 +47,12 @@ async def track_visit(body: VisitBody, request: Request, db: Session = Depends(g
             payload = decode_token(auth.split(" ", 1)[1])
             if payload.get("type") == "access" and payload.get("sub"):
                 user_id = int(payload["sub"])
-        except (JWTError, ValueError):
+        except (HTTPException, JWTError, ValueError):
             user_id = None
     event = VisitEvent(
         ip_address=ip,
+        visitor_id=_safe_id(body.visitor_id),
+        event_type="page_view",
         user_agent=ua,
         path=body.path[:512] or "/",
         geo_location=str(geo["name"]),
