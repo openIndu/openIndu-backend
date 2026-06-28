@@ -45,16 +45,19 @@ class MilvusService:
         items = []
         for hits in results:
             for hit in hits:
+                # pymilvus 2.4 的 Hit.entity.get(k) 只接受单个 key 参数（不像 dict.get 那样
+                # 可接受默认值），多传一个参数会触发 TypeError。统一用 `or` 兜底缺失字段。
+                ent = hit.entity
                 items.append({
                     "id": hit.id,
                     "score": round(hit.score, 4),
-                    "text": hit.entity.get("text", ""),
+                    "text": ent.get("text") or "",
                     "metadata": {
-                        "document_name": hit.entity.get("document_name", ""),
-                        "brand": hit.entity.get("brand", ""),
-                        "category": hit.entity.get("category", ""),
-                        "page": hit.entity.get("page", 0),
-                        "chunk_id": hit.entity.get("chunk_id", 0),
+                        "document_name": ent.get("document_name") or "",
+                        "brand": ent.get("brand") or "",
+                        "category": ent.get("category") or "",
+                        "page": ent.get("page") or 0,
+                        "chunk_id": ent.get("chunk_id") or 0,
                     },
                 })
         return items
