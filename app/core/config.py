@@ -67,6 +67,20 @@ class Settings(BaseSettings):
     # cost almost nothing and dashboard "current online" depends on them.
     RAG_SYNC_ENABLED: bool = True
 
+    # --- 智能咨询 / RAG 对话（§4.3.12）---
+    # 生成模型走 OpenAI 兼容协议（默认 DeepSeek，可切通义等），换厂商只改这些 env。
+    # 检索沿用 BGE-M3 + Milvus（CPU），不依赖 GPU。
+    LLM_PROVIDER: str = "deepseek"
+    LLM_API_KEY: str = ""
+    LLM_BASE_URL: str = "https://api.deepseek.com"
+    LLM_MODEL: str = "deepseek-chat"
+    LLM_TEMPERATURE: float = 0.2
+    LLM_MAX_TOKENS: int = 1024
+    LLM_TIMEOUT_SECONDS: int = 60
+    RAG_TOP_K: int = 5
+    # 每用户每日咨询上限（admin 豁免），基于 chat_logs 当日计数
+    CHAT_DAILY_LIMIT: int = 30
+
     # --- Direct-to-OSS multipart upload (large software packages) ---
     # Part size for multipart uploads. Must be ≥ 5 MiB (S3/OSS minimum).
     # 64 MiB strikes a good balance: a 5 GiB package is ~80 parts (few enough
