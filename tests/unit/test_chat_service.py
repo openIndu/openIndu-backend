@@ -74,3 +74,35 @@ def test_build_messages_skips_bad_history_roles():
 def test_build_messages_empty_context():
     msgs = chat_service.build_messages("无关问题", None, [])
     assert "（无相关片段）" in msgs[-1]["content"]
+
+
+def test_determine_mode_no_chunks_returns_fallback():
+    assert chat_service.determine_mode([]) == "fallback"
+
+
+def test_determine_mode_low_score_returns_fallback():
+    # 命中但分数都偏低（<0.7 阈值）—— 视为弱相关，切到 fallback
+    chunks = [_chunk("A.pdf", 1, "x", score=0.3), _chunk("A.pdf", 2, "y", score=0.65)]
+    assert chat_service.determine_mode(chunks) == "fallback"
+
+
+def test_determine_mode_high_score_returns_grounded():
+    chunks = [_chunk("A.pdf", 1, "x", score=0.75), _chunk("A.pdf", 2, "y", score=0.4)]
+    # 只要有一个 ≥ 阈值就 grounded
+    assert chat_service.determine_mode(chunks) == "grounded"
+
+
+def test_build_messages_fallback_mode_omits_context():
+    chunks = [_chunk("A.pdf", 1, "irrelevant text")]
+    msgs = chat_service.build_messages("fx 5u 是什么？", None, chunks, mode="fallback")
+    # fallback 用专用 system prompt，user turn 不带【知识库片段】
+    assert "通用工业自动化知识" in msgs[0]["content"]
+    assert "知识库片段" not in msgs[-1]["content"]
+    assert msgs[-1]["content"] == "fx 5u 是什么？"
+
+
+def test_build_messages_grounded_mode_keeps_context():
+    chunks = [_chunk("S7 手册.pdf", 12, "Modbus TCP 配置步骤……")]
+    msgs = chat_service.build_messages("怎么配 Modbus TCP?", None, chunks, mode="grounded")
+    assert "只能依据" in msgs[0]["content"]
+    assert "知识库片段" in msgs[-1]["content"]
