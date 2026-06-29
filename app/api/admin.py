@@ -17,6 +17,8 @@ async def audit_logs(
     admin_keyword: str | None = Query(None),
     target_keyword: str | None = Query(None),
     action: str | None = Query(None),
+    sort_by: str = Query("created_at", regex="^(created_at)$"),
+    sort_order: str = Query("desc", regex="^(asc|desc)$"),
     db: Session = Depends(get_db),
     admin_user: User = Depends(require_admin),
 ):
@@ -28,7 +30,6 @@ async def audit_logs(
         db.query(AdminAuditLog, AdminAlias.phone.label("admin_phone"), TargetAlias.phone.label("target_phone"))
         .join(AdminAlias, AdminAuditLog.admin_id == AdminAlias.id, isouter=True)
         .join(TargetAlias, AdminAuditLog.target_user_id == TargetAlias.id, isouter=True)
-        .order_by(AdminAuditLog.created_at.desc())
     )
     if admin_keyword:
         q = q.filter(AdminAlias.phone.ilike(f"%{admin_keyword}%"))
@@ -36,6 +37,15 @@ async def audit_logs(
         q = q.filter(TargetAlias.phone.ilike(f"%{target_keyword}%"))
     if action:
         q = q.filter(AdminAuditLog.action == action)
+
+    # Apply sorting
+    sort_column = {
+        "created_at": AdminAuditLog.created_at,
+    }[sort_by]
+    if sort_order == "asc":
+        q = q.order_by(sort_column.asc())
+    else:
+        q = q.order_by(sort_column.desc())
 
     total = q.count()
     rows = q.offset((page - 1) * page_size).limit(page_size).all()
