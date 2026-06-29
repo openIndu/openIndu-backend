@@ -15,6 +15,7 @@ from app.api import (
     auth,
     brand_mapping,
     chat,
+    chat_sessions,
     config,
     documents,
     files,
@@ -34,6 +35,8 @@ from app.middleware.token_blacklist import TokenBlacklistMiddleware
 from app.models import Base
 from app.models.admin_audit_log import AdminAuditLog  # noqa: F401
 from app.models.chat_log import ChatLog  # noqa: F401
+from app.models.chat_message import ChatMessage  # noqa: F401
+from app.models.chat_session import ChatSession  # noqa: F401
 from app.models.document import Document  # noqa: F401
 from app.models.download_log import DownloadLog  # noqa: F401
 from app.models.login_session import LoginSession  # noqa: F401
@@ -117,7 +120,7 @@ app.add_middleware(SlowAPIMiddleware)
 app.add_middleware(OnlineStatsMiddleware)
 app.add_middleware(TokenBlacklistMiddleware)
 
-for router in [auth.router, users.router, stats.router, admin.router, documents.router, software.router, sync.router, config.router, brand_mapping.router, files.router, visits.router, portal.router, tags.router, chat.router, member_applications.router]:
+for router in [auth.router, users.router, stats.router, admin.router, documents.router, software.router, sync.router, config.router, brand_mapping.router, files.router, visits.router, portal.router, tags.router, chat.router, chat_sessions.router, member_applications.router]:
     app.include_router(router, prefix="/api/v1")
 
 

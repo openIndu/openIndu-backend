@@ -12,6 +12,7 @@ from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from sqlalchemy import desc
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
@@ -19,6 +20,8 @@ from app.core.config import settings
 from app.core.dependencies import get_db, require_member
 from app.core.utils import ok, real_client_ip
 from app.models.chat_log import ChatLog
+from app.models.chat_message import ChatMessage
+from app.models.chat_session import ChatSession
 from app.models.user import User
 from app.services import chat_service
 
@@ -109,6 +112,122 @@ async def chat(
     # 4. SSE 流式返回（sources -> delta* -> done）
     return StreamingResponse(
         chat_service.stream_answer(body.message, history, chunks, sources, log.id),
+        media_type="text/event-stream",
+        headers=_SSE_HEADERS,
+    )
+
+
+@router.post("/chat/sessions/{session_id}/stream")
+async def chat_session_stream(
+    session_id: int,
+    body: ChatBody,
+    request: Request,
+    current_user: User = Depends(require_member),
+    db: Session = Depends(get_db),
+):
+    if not body.message or not body.message.strip():
+        raise HTTPException(status_code=400, detail="问题不能为空")
+
+    # Validate session ownership
+    session = db.query(ChatSession).filter(
+        ChatSession.id == session_id, ChatSession.user_id == current_user.id
+    ).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="会话不存在")
+
+    # Daily quota check (admin exempt)
+    if current_user.role != "admin" and _today_count(db, current_user.id) >= settings.CHAT_DAILY_LIMIT:
+        raise HTTPException(status_code=429, detail=f"今日咨询次数已用完（{settings.CHAT_DAILY_LIMIT}次/天）")
+
+    # Load history from DB (last 6 messages)
+    db_msgs = (
+        db.query(ChatMessage)
+        .filter(ChatMessage.session_id == session_id)
+        .order_by(desc(ChatMessage.id))
+        .limit(6)
+        .all()
+    )
+    history = [{"role": m.role, "content": m.content} for m in reversed(db_msgs)]
+
+    # Persist user message
+    user_msg = ChatMessage(session_id=session_id, role="user", content=body.message[:4000])
+    db.add(user_msg)
+    # Auto-title from first user message
+    if session.title == "新会话" and not db_msgs:
+        session.title = body.message.strip()[:30]
+    db.commit()
+
+    # Retrieval
+    filters = {
+        "brand": (body.filters or {}).get("brand"),
+        "category": (body.filters or {}).get("category"),
+    }
+    try:
+        chunks = await run_in_threadpool(
+            chat_service.retrieve, body.message, settings.RAG_TOP_K, filters
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail="知识库暂不可用，请稍后再试") from exc
+    sources = chat_service.sources_from(chunks)
+
+    # Quota log
+    log = ChatLog(
+        user_id=current_user.id,
+        ip_address=real_client_ip(request) or "unknown",
+        question=body.message[:2000],
+        source_docs=json.dumps([s["document_name"] for s in sources], ensure_ascii=False),
+    )
+    db.add(log)
+    db.commit()
+    db.refresh(log)
+
+    # Persist assistant message after stream completes
+    async def stream_and_save():
+        full_content = ""
+        final_mode = None
+        current_event = None
+        async for chunk in chat_service.stream_answer(body.message, history, chunks, sources, log.id):
+            text = chunk.decode() if isinstance(chunk, bytes) else chunk
+            for line in text.splitlines():
+                if line.startswith("event:"):
+                    current_event = line[6:].strip()
+                elif line.startswith("data:"):
+                    raw = line[5:].strip()
+                    try:
+                        d = json.loads(raw)
+                        if current_event == "delta":
+                            full_content += d.get("text", "")
+                        elif current_event == "mode":
+                            final_mode = d.get("mode")
+                    except Exception:  # noqa: BLE001
+                        pass
+            yield chunk
+
+        # Persist assistant reply using own session (request session already closed)
+        from app.core.database import SessionLocal
+        import sqlalchemy
+        save_db = SessionLocal()
+        try:
+            asst = ChatMessage(
+                session_id=session_id,
+                role="assistant",
+                content=full_content,
+                sources=json.dumps(sources, ensure_ascii=False) if sources else None,
+                mode=final_mode,
+            )
+            save_db.add(asst)
+            save_db.execute(
+                sqlalchemy.text("UPDATE chat_sessions SET updated_at = NOW() WHERE id = :sid"),
+                {"sid": session_id},
+            )
+            save_db.commit()
+        except Exception:  # noqa: BLE001
+            save_db.rollback()
+        finally:
+            save_db.close()
+
+    return StreamingResponse(
+        stream_and_save(),
         media_type="text/event-stream",
         headers=_SSE_HEADERS,
     )
