@@ -65,16 +65,27 @@ async def list_applications(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
     status: str | None = Query(None),
+    sort_by: str = Query("created_at", regex="^(created_at)$"),
+    sort_order: str = Query("desc", regex="^(asc|desc)$"),
     db: Session = Depends(get_db),
     admin: User = Depends(require_admin),
 ):
     q = (
         db.query(User)
         .filter(User.member_apply_status.isnot(None), User.deleted_at.is_(None))
-        .order_by(User.member_apply_at.desc())
     )
     if status:
         q = q.filter(User.member_apply_status == status)
+
+    # Apply sorting
+    sort_column = {
+        "created_at": User.member_apply_at,
+    }[sort_by]
+    if sort_order == "asc":
+        q = q.order_by(sort_column.asc())
+    else:
+        q = q.order_by(sort_column.desc())
+
     total = q.count()
     items = q.offset((page - 1) * size).limit(size).all()
 

@@ -542,6 +542,8 @@ async def visit_logs(
     authed: str | None = Query(None),         # 'yes' (登录) | 'no' (匿名) | None
     include_local: bool = Query(False),       # 本地开发 / 内网访问默认隐藏
     include_unknown: bool = Query(False),     # geo='未知' (无法解析) 默认隐藏
+    sort_by: str = Query("created_at", regex="^(created_at)$"),
+    sort_order: str = Query("desc", regex="^(asc|desc)$"),
     db: Session = Depends(get_db),
     admin: User = Depends(require_admin),
 ):
@@ -555,7 +557,6 @@ async def visit_logs(
     q = (
         db.query(VisitEvent, User.phone)
         .join(User, VisitEvent.user_id == User.id, isouter=True)
-        .order_by(VisitEvent.created_at.desc())
     )
     if not include_local:
         q = q.filter(VisitEvent.geo_location.is_distinct_from("本地开发"))
@@ -568,6 +569,15 @@ async def visit_logs(
         q = q.filter(VisitEvent.is_authenticated.is_(True))
     elif authed == "no":
         q = q.filter(VisitEvent.is_authenticated.is_(False))
+
+    # Apply sorting
+    sort_column = {
+        "created_at": VisitEvent.created_at,
+    }[sort_by]
+    if sort_order == "asc":
+        q = q.order_by(sort_column.asc())
+    else:
+        q = q.order_by(sort_column.desc())
 
     total = q.count()
     rows = q.offset((page - 1) * size).limit(size).all()

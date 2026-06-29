@@ -76,11 +76,13 @@ async def list_users(
     keyword: str | None = Query(None),
     role: str | None = Query(None),
     apply_status: str | None = Query(None),
+    sort_by: str = Query("created_at", regex="^(created_at|last_login)$"),
+    sort_order: str = Query("desc", regex="^(asc|desc)$"),
     db: Session = Depends(get_db),
     admin: User = Depends(require_admin),
 ):
     # Soft-deleted users (deleted_at IS NOT NULL) are hidden by default.
-    q = db.query(User).filter(User.deleted_at.is_(None)).order_by(User.created_at.desc())
+    q = db.query(User).filter(User.deleted_at.is_(None))
     if keyword:
         q = q.filter(User.phone.ilike(f"%{keyword}%"))
     if role:
@@ -89,6 +91,17 @@ async def list_users(
         q = q.filter(User.member_apply_status.is_(None))
     elif apply_status:
         q = q.filter(User.member_apply_status == apply_status)
+
+    # Apply sorting
+    sort_column = {
+        "created_at": User.created_at,
+        "last_login": User.last_login,
+    }[sort_by]
+    if sort_order == "asc":
+        q = q.order_by(sort_column.asc())
+    else:
+        q = q.order_by(sort_column.desc())
+
     total = q.count()
     items = [_enrich_user_dict(db, u.to_dict(), u.id) for u in q.offset((page - 1) * size).limit(size).all()]
     return ok({"items": items, "total": total, "page": page, "size": size})
