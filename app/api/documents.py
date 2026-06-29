@@ -120,7 +120,18 @@ def client_ip(request: Request) -> str | None:
 
 
 @router.get("")
-async def list_documents(brand: str | None = None, category: str | None = None, series: str | None = None, keyword: str | None = None, published_only: bool = False, page: int = Query(1, ge=1), size: int = Query(20, ge=1, le=100), db: Session = Depends(get_db)):
+async def list_documents(
+    brand: str | None = None,
+    category: str | None = None,
+    series: str | None = None,
+    keyword: str | None = None,
+    published_only: bool = False,
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+    sort_by: str = Query("upload_time", regex="^(file_size|upload_time|download_count)$"),
+    sort_order: str = Query("desc", regex="^(asc|desc)$"),
+    db: Session = Depends(get_db)
+):
     q = db.query(Document)
     if published_only:
         q = q.filter(Document.is_published == True)  # noqa: E712
@@ -133,7 +144,20 @@ async def list_documents(brand: str | None = None, category: str | None = None, 
     if keyword:
         q = q.filter(Document.original_name.ilike(f"%{keyword}%"))
     total = q.count()
-    items = [d.to_dict() for d in q.order_by(Document.upload_time.desc()).offset((page - 1) * size).limit(size).all()]
+
+    # Apply sorting
+    sort_column = {
+        "file_size": Document.file_size,
+        "upload_time": Document.upload_time,
+        "download_count": Document.download_count
+    }[sort_by]
+
+    if sort_order == "asc":
+        q = q.order_by(sort_column.asc())
+    else:
+        q = q.order_by(sort_column.desc())
+
+    items = [d.to_dict() for d in q.offset((page - 1) * size).limit(size).all()]
     return ok({"items": items, "total": total, "page": page, "size": size})
 
 
