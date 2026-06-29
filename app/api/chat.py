@@ -204,8 +204,9 @@ async def chat_session_stream(
             yield chunk
 
         # Persist assistant reply using own session (request session already closed)
-        from app.core.database import SessionLocal
         import sqlalchemy
+
+        from app.core.database import SessionLocal
         save_db = SessionLocal()
         try:
             asst = ChatMessage(
