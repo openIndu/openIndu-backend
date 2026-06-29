@@ -1,7 +1,7 @@
 """Middleware that updates login session activity."""
 from datetime import datetime, timezone
 
-from fastapi import Request
+from fastapi import HTTPException, Request
 from jose import JWTError
 from sqlalchemy.exc import IntegrityError
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -82,6 +82,6 @@ class OnlineStatsMiddleware(BaseHTTPMiddleware):
                         db.rollback()
                     finally:
                         db.close()
-            except (JWTError, ValueError):
+            except (JWTError, ValueError, HTTPException):
                 pass
         return await call_next(request)
