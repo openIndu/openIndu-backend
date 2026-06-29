@@ -33,6 +33,7 @@ async def apply(body: ApplyBody, db: Session = Depends(get_db), user: User = Dep
         raise HTTPException(400, "当前账号已是会员或管理员，无需申请")
     if user.member_apply_status == "pending":
         raise HTTPException(400, "已有待审核的申请，请耐心等待")
+    # rejected 状态允许重新申请（下方逻辑会覆盖为 pending）
     user.member_apply_status = "pending"
     user.member_apply_note = body.note
     user.member_apply_at = _utcnow()
@@ -92,6 +93,32 @@ async def list_applications(
         for u in items
     ]
     return ok({"items": result, "total": total, "page": page, "size": size})
+
+
+@router.put("/admin/member-applications/{user_id}/reject")
+async def reject(user_id: int, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    target = db.query(User).filter(User.id == user_id).first()
+    if not target:
+        raise HTTPException(404, "用户不存在")
+    if target.member_apply_status != "pending":
+        raise HTTPException(400, "该申请已处理或不存在")
+
+    target.member_apply_status = "rejected"
+    target.member_reviewed_by = admin.id
+    _audit(db, admin.id, target.id, "member_reject", {"user_id": user_id})
+    db.commit()
+    db.refresh(target)
+    return ok({
+        "id": target.id,
+        "user_id": target.id,
+        "status": target.member_apply_status,
+        "note": target.member_apply_note,
+        "created_at": iso_utc(target.member_apply_at),
+        "reviewed_by": target.member_reviewed_by,
+        "phone": mask_phone(target.phone),
+        "nickname": target.nickname,
+        "current_role": target.role,
+    }, "已驳回")
 
 
 @router.put("/admin/member-applications/{user_id}/approve")

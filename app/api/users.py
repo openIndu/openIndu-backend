@@ -74,6 +74,7 @@ async def list_users(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
     keyword: str | None = Query(None),
+    role: str | None = Query(None),
     apply_status: str | None = Query(None),
     db: Session = Depends(get_db),
     admin: User = Depends(require_admin),
@@ -82,7 +83,11 @@ async def list_users(
     q = db.query(User).filter(User.deleted_at.is_(None)).order_by(User.created_at.desc())
     if keyword:
         q = q.filter(User.phone.ilike(f"%{keyword}%"))
-    if apply_status:
+    if role:
+        q = q.filter(User.role == role)
+    if apply_status == "none":
+        q = q.filter(User.member_apply_status.is_(None))
+    elif apply_status:
         q = q.filter(User.member_apply_status == apply_status)
     total = q.count()
     items = [_enrich_user_dict(db, u.to_dict(), u.id) for u in q.offset((page - 1) * size).limit(size).all()]
