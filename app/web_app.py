@@ -37,7 +37,6 @@ from app.models.chat_log import ChatLog  # noqa: F401
 from app.models.document import Document  # noqa: F401
 from app.models.download_log import DownloadLog  # noqa: F401
 from app.models.login_session import LoginSession  # noqa: F401
-from app.models.member_application import MemberApplication  # noqa: F401
 from app.models.portal_content import PortalContent  # noqa: F401
 from app.models.resource_tag import ResourceTag  # noqa: F401
 from app.models.sms_code import SmsCode  # noqa: F401

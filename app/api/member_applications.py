@@ -6,9 +6,8 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_db, require_admin, require_auth
-from app.core.utils import mask_phone, ok
+from app.core.utils import iso_utc, mask_phone, ok
 from app.models.admin_audit_log import AdminAuditLog
-from app.models.member_application import MemberApplication
 from app.models.user import User
 
 router = APIRouter()
@@ -22,38 +21,40 @@ def _audit(db: Session, admin_id: int, target_user_id: int, action: str, detail:
     db.add(AdminAuditLog(admin_id=admin_id, target_user_id=target_user_id, action=action, detail=detail or {}))
 
 
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
 # ── 用户侧 ────────────────────────────────────────────────────────────────────
 
 @router.post("/member-applications")
 async def apply(body: ApplyBody, db: Session = Depends(get_db), user: User = Depends(require_auth)):
     if user.role in ("member", "admin"):
         raise HTTPException(400, "当前账号已是会员或管理员，无需申请")
-    existing = db.query(MemberApplication).filter(
-        MemberApplication.user_id == user.id,
-        MemberApplication.status == "pending",
-    ).first()
-    if existing:
+    if user.member_apply_status == "pending":
         raise HTTPException(400, "已有待审核的申请，请耐心等待")
-    app_obj = MemberApplication(user_id=user.id, note=body.note)
-    db.add(app_obj)
+    user.member_apply_status = "pending"
+    user.member_apply_note = body.note
+    user.member_apply_at = _utcnow()
+    user.member_reviewed_by = None
     db.commit()
-    db.refresh(app_obj)
-    return ok(app_obj.to_dict(), "申请已提交，等待审核")
+    db.refresh(user)
+    return ok({
+        "id": user.id,
+        "status": user.member_apply_status,
+        "created_at": iso_utc(user.member_apply_at),
+    }, "申请已提交，等待审核")
 
 
 @router.get("/member-applications/mine")
 async def my_application(db: Session = Depends(get_db), user: User = Depends(require_auth)):
-    """返回当前用户最新一条申请状态（pending 优先，否则最近一条）。"""
-    pending = db.query(MemberApplication).filter(
-        MemberApplication.user_id == user.id,
-        MemberApplication.status == "pending",
-    ).first()
-    if pending:
-        return ok(pending.to_dict())
-    latest = db.query(MemberApplication).filter(
-        MemberApplication.user_id == user.id,
-    ).order_by(MemberApplication.created_at.desc()).first()
-    return ok(latest.to_dict() if latest else None)
+    if not user.member_apply_status:
+        return ok(None)
+    return ok({
+        "id": user.id,
+        "status": user.member_apply_status,
+        "created_at": iso_utc(user.member_apply_at),
+    })
 
 
 # ── 管理员侧 ──────────────────────────────────────────────────────────────────
@@ -66,44 +67,55 @@ async def list_applications(
     db: Session = Depends(get_db),
     admin: User = Depends(require_admin),
 ):
-    q = db.query(MemberApplication).order_by(MemberApplication.created_at.desc())
+    q = (
+        db.query(User)
+        .filter(User.member_apply_status.isnot(None), User.deleted_at.is_(None))
+        .order_by(User.member_apply_at.desc())
+    )
     if status:
-        q = q.filter(MemberApplication.status == status)
+        q = q.filter(User.member_apply_status == status)
     total = q.count()
     items = q.offset((page - 1) * size).limit(size).all()
 
-    user_ids = {a.user_id for a in items}
-    users = {u.id: u for u in db.query(User).filter(User.id.in_(user_ids)).all()}
-
-    result = []
-    for a in items:
-        d = a.to_dict()
-        u = users.get(a.user_id)
-        d["phone"] = mask_phone(u.phone) if u else None
-        d["nickname"] = u.nickname if u else None
-        d["current_role"] = u.role if u else None
-        result.append(d)
-
+    result = [
+        {
+            "id": u.id,
+            "user_id": u.id,
+            "status": u.member_apply_status,
+            "note": u.member_apply_note,
+            "created_at": iso_utc(u.member_apply_at),
+            "reviewed_by": u.member_reviewed_by,
+            "phone": mask_phone(u.phone),
+            "nickname": u.nickname,
+            "current_role": u.role,
+        }
+        for u in items
+    ]
     return ok({"items": result, "total": total, "page": page, "size": size})
 
 
-@router.put("/admin/member-applications/{app_id}/approve")
-async def approve(app_id: int, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
-    app_obj = db.query(MemberApplication).filter(MemberApplication.id == app_id).first()
-    if not app_obj:
-        raise HTTPException(404, "申请记录不存在")
-    if app_obj.status != "pending":
-        raise HTTPException(400, "该申请已处理")
-    target = db.query(User).filter(User.id == app_obj.user_id).first()
+@router.put("/admin/member-applications/{user_id}/approve")
+async def approve(user_id: int, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    target = db.query(User).filter(User.id == user_id).first()
     if not target:
         raise HTTPException(404, "用户不存在")
+    if target.member_apply_status != "pending":
+        raise HTTPException(400, "该申请已处理或不存在")
 
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
-    app_obj.status = "approved"
-    app_obj.reviewed_by = admin.id
-    app_obj.updated_at = now
     target.role = "member"
-    _audit(db, admin.id, target.id, "member_approve", {"application_id": app_id})
+    target.member_apply_status = "approved"
+    target.member_reviewed_by = admin.id
+    _audit(db, admin.id, target.id, "member_approve", {"user_id": user_id})
     db.commit()
-    db.refresh(app_obj)
-    return ok(app_obj.to_dict(), "已通过，用户已升级为会员")
+    db.refresh(target)
+    return ok({
+        "id": target.id,
+        "user_id": target.id,
+        "status": target.member_apply_status,
+        "note": target.member_apply_note,
+        "created_at": iso_utc(target.member_apply_at),
+        "reviewed_by": target.member_reviewed_by,
+        "phone": mask_phone(target.phone),
+        "nickname": target.nickname,
+        "current_role": target.role,
+    }, "已通过，用户已升级为会员")
