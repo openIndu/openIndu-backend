@@ -26,6 +26,10 @@ def search_hmi_manual(brand: str, keyword: str, top_k: int = 5):
     return _search(keyword, top_k, brand, "hmi-manual")
 
 
+def search_robot_manual(brand: str, keyword: str, top_k: int = 5):
+    return _search(keyword, top_k, brand, "robot-manual")
+
+
 def search_software_manual(brand: str, keyword: str, top_k: int = 5):
     return _search(keyword, top_k, brand, "software-manual")
 
