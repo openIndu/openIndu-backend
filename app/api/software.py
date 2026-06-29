@@ -58,7 +58,18 @@ def _check_daily_limit(db: Session, user: User):
 
 
 @router.get("")
-async def list_software(brand: str | None = None, category: str | None = None, keyword: str | None = None, published_only: bool = False, expand_versions: bool = False, page: int = Query(1, ge=1), size: int = Query(20, ge=1, le=100), db: Session = Depends(get_db)):
+async def list_software(
+    brand: str | None = None,
+    category: str | None = None,
+    keyword: str | None = None,
+    published_only: bool = False,
+    expand_versions: bool = False,
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+    sort_by: str = Query("upload_time", regex="^(file_size|upload_time|download_count)$"),
+    sort_order: str = Query("desc", regex="^(asc|desc)$"),
+    db: Session = Depends(get_db)
+):
     if expand_versions:
         # Version-grained listing: one row per SoftwareVersion. Publish state
         # and download counts come from the version, not the parent software.
@@ -74,7 +85,20 @@ async def list_software(brand: str | None = None, category: str | None = None, k
             # Match either the per-version name (preferred) or the parent software name.
             vq = vq.filter((SoftwareVersion.original_name.ilike(f"%{keyword}%")) | (Software.original_name.ilike(f"%{keyword}%")))
         total = vq.count()
-        rows = vq.order_by(SoftwareVersion.upload_time.desc()).offset((page - 1) * size).limit(size).all()
+
+        # Apply sorting for version-grained listing
+        sort_column = {
+            "file_size": SoftwareVersion.file_size,
+            "upload_time": SoftwareVersion.upload_time,
+            "download_count": SoftwareVersion.download_count
+        }[sort_by]
+
+        if sort_order == "asc":
+            vq = vq.order_by(sort_column.asc())
+        else:
+            vq = vq.order_by(sort_column.desc())
+
+        rows = vq.offset((page - 1) * size).limit(size).all()
         items = []
         for v in rows:
             s = v.software
