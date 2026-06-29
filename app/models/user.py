@@ -23,6 +23,11 @@ class User(Base):
     # login. Existing visit_events / download_records / login_sessions are
     # preserved for audit history.
     deleted_at = Column(DateTime, nullable=True)
+    # Member application state — NULL means never applied
+    member_apply_status = Column(String(20), nullable=True)
+    member_apply_note = Column(String(500), nullable=True)
+    member_apply_at = Column(DateTime, nullable=True)
+    member_reviewed_by = Column(BigInteger, ForeignKey("users.id"), nullable=True)
 
     def to_dict(self) -> dict:
         return {
@@ -38,4 +43,6 @@ class User(Base):
             "created_at": iso_utc(self.created_at),
             "last_login": iso_utc(self.last_login),
             "deleted_at": iso_utc(self.deleted_at),
+            "member_apply_status": self.member_apply_status,
+            "member_apply_at": iso_utc(self.member_apply_at),
         }
