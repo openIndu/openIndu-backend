@@ -3,7 +3,7 @@ from datetime import datetime
 
 from sqlalchemy import BigInteger, Column, DateTime, Index, String, Text
 
-from app.core.database import Base
+from app.models import Base
 
 
 class BrandMapping(Base):
