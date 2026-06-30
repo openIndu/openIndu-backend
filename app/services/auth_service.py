@@ -120,10 +120,7 @@ class AuthService:
 
     def verify_code(self, db: Session, phone: str, code: str) -> bool:
         self._validate_phone(phone)
-        if settings.SMS_MOCK_ENABLED and (
-            code == settings.SMS_MOCK_CODE
-            or (settings.SMS_MOCK_EXTRA_CODE and code == settings.SMS_MOCK_EXTRA_CODE)
-        ):
+        if settings.SMS_MOCK_ENABLED and code == settings.SMS_MOCK_CODE:
             return True
         now = utcnow()
         record = db.query(SmsCode).filter(
