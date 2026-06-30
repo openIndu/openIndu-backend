@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_db, require_admin
 from app.core.utils import iso_utc, mask_phone, ok
+from app.models.chat_message import ChatMessage
 from app.models.document import Document
 from app.models.login_session import LoginSession
 from app.models.software import Software
@@ -532,6 +533,76 @@ async def login_history(
         "is_active": session.is_active,
     } for session, phone in rows]
     return ok({"items": items, "total": total, "page": page, "size": size})
+
+
+@router.get("/chat/knowledge-gaps")
+def chat_knowledge_gaps(
+    limit: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
+    _user: User = Depends(require_admin),
+):
+    """Return assistant messages with negative feedback (👎) and their preceding questions.
+
+    Also returns fallback-mode messages (no RAG source matched) to surface
+    knowledge coverage gaps that need more documents.
+    """
+    # 👎-rated assistant messages with the user question above them
+    disliked_msgs = (
+        db.query(ChatMessage)
+        .filter(ChatMessage.role == "assistant", ChatMessage.feedback == -1)
+        .order_by(ChatMessage.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+    disliked = []
+    for msg in disliked_msgs:
+        prev = (
+            db.query(ChatMessage)
+            .filter(
+                ChatMessage.session_id == msg.session_id,
+                ChatMessage.id < msg.id,
+                ChatMessage.role == "user",
+            )
+            .order_by(ChatMessage.id.desc())
+            .first()
+        )
+        disliked.append({
+            "message_id": msg.id,
+            "session_id": msg.session_id,
+            "question": prev.content if prev else None,
+            "answer_snippet": msg.content[:200] if msg.content else None,
+            "mode": msg.mode,
+            "created_at": iso_utc(msg.created_at),
+        })
+
+    # Fallback-mode messages (AI used general knowledge, not the knowledge base)
+    fallback_msgs = (
+        db.query(ChatMessage)
+        .filter(ChatMessage.role == "assistant", ChatMessage.mode == "fallback")
+        .order_by(ChatMessage.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+    fallbacks = []
+    for msg in fallback_msgs:
+        prev = (
+            db.query(ChatMessage)
+            .filter(
+                ChatMessage.session_id == msg.session_id,
+                ChatMessage.id < msg.id,
+                ChatMessage.role == "user",
+            )
+            .order_by(ChatMessage.id.desc())
+            .first()
+        )
+        fallbacks.append({
+            "message_id": msg.id,
+            "session_id": msg.session_id,
+            "question": prev.content if prev else None,
+            "created_at": iso_utc(msg.created_at),
+        })
+
+    return ok({"disliked": disliked, "fallbacks": fallbacks})
 
 
 @router.get("/visit-logs")

@@ -100,3 +100,34 @@ def get_messages(
         .all()
     )
     return ok([m.to_dict() for m in msgs])
+
+
+class FeedbackBody(BaseModel):
+    value: int  # 1 = thumbs-up, -1 = thumbs-down
+
+
+@router.post("/chat/sessions/{session_id}/messages/{message_id}/feedback")
+def set_message_feedback(
+    session_id: int,
+    message_id: int,
+    body: FeedbackBody,
+    current_user: User = Depends(require_member),
+    db: Session = Depends(get_db),
+):
+    if body.value not in (1, -1):
+        raise HTTPException(status_code=400, detail="value must be 1 or -1")
+    _get_session_or_404(session_id, current_user.id, db)
+    msg = (
+        db.query(ChatMessage)
+        .filter(
+            ChatMessage.id == message_id,
+            ChatMessage.session_id == session_id,
+            ChatMessage.role == "assistant",
+        )
+        .first()
+    )
+    if not msg:
+        raise HTTPException(status_code=404, detail="消息不存在")
+    msg.feedback = body.value
+    db.commit()
+    return ok({"id": message_id, "feedback": body.value})
