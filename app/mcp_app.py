@@ -22,6 +22,8 @@ async def health():
 
 
 # Mount the MCP SSE server at /mcp
-mcp_sse_app = mcp.sse_app(mount_path="/mcp")
+# mount_path must be "" here because FastAPI already mounts the sub-app at /mcp;
+# setting mount_path="/mcp" would make session URLs double-prefix to /mcp/mcp/messages/
+mcp_sse_app = mcp.sse_app(mount_path="")
 app.mount("/mcp", mcp_sse_app)
 
