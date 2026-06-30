@@ -39,7 +39,6 @@ class Settings(BaseSettings):
     SMS_TEMPLATE_ID: str = ""
     SMS_MOCK_ENABLED: bool = True
     SMS_MOCK_CODE: str = "888888"
-    SMS_MOCK_EXTRA_CODE: str = ""   # 附加测试验证码，留空则不生效
 
     MCP_API_KEY: str = "change-me-mcp-key"
     WEB_PORT: int = 8004
