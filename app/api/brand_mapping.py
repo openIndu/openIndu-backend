@@ -1,8 +1,11 @@
-"""Brand mapping API placeholders."""
+"""Brand mapping API."""
 from fastapi import APIRouter, Depends
+from sqlalchemy import or_
+from sqlalchemy.orm import Session
 
-from app.core.dependencies import require_auth
+from app.core.dependencies import get_db, require_auth
 from app.core.utils import ok
+from app.models.brand_mapping import BrandMapping
 from app.models.user import User
 
 router = APIRouter(prefix="/brand-mapping")
@@ -22,5 +25,36 @@ async def overview(user: User = Depends(require_auth)):
 
 
 @router.get("/address")
-async def address(source_brand: str | None = None, target_brand: str | None = None, item: str | None = None, user: User = Depends(require_auth)):
-    return ok({"source_brand": source_brand, "target_brand": target_brand, "item": item, "mapping": None})
+async def address(
+    source_brand: str | None = None,
+    target_brand: str | None = None,
+    item: str | None = None,
+    user: User = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    q = db.query(BrandMapping)
+    if source_brand:
+        q = q.filter(BrandMapping.source_brand == source_brand.lower())
+    if target_brand:
+        q = q.filter(BrandMapping.target_brand == target_brand.lower())
+    if item:
+        kw = f"%{item}%"
+        q = q.filter(
+            or_(
+                BrandMapping.item_type.ilike(kw),
+                BrandMapping.source_value.ilike(kw),
+                BrandMapping.target_value.ilike(kw),
+                BrandMapping.description.ilike(kw),
+            )
+        )
+    rows = q.order_by(BrandMapping.item_type, BrandMapping.id).all()
+    mappings = [
+        {
+            "item_type": r.item_type,
+            "source_value": r.source_value,
+            "target_value": r.target_value,
+            "description": r.description,
+        }
+        for r in rows
+    ]
+    return ok({"source_brand": source_brand, "target_brand": target_brand, "item": item, "mappings": mappings})

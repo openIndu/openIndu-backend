@@ -44,7 +44,45 @@ def search_electrical_standard(standard_name: str | None = None, keyword: str | 
 
 
 def get_brand_mapping(source_brand: str, target_brand: str, item: str):
-    return {"source_brand": source_brand, "target_brand": target_brand, "item": item, "mapping": None}
+    """Query cross-brand PLC address/instruction mappings from the database."""
+    from sqlalchemy import or_
+
+    from app.models.brand_mapping import BrandMapping
+
+    db = SessionLocal()
+    try:
+        q = db.query(BrandMapping).filter(
+            BrandMapping.source_brand == source_brand.lower(),
+            BrandMapping.target_brand == target_brand.lower(),
+        )
+        if item:
+            kw = f"%{item}%"
+            q = q.filter(
+                or_(
+                    BrandMapping.item_type.ilike(kw),
+                    BrandMapping.source_value.ilike(kw),
+                    BrandMapping.target_value.ilike(kw),
+                    BrandMapping.description.ilike(kw),
+                )
+            )
+        rows = q.order_by(BrandMapping.item_type, BrandMapping.id).all()
+        mappings = [
+            {
+                "item_type": r.item_type,
+                "source_value": r.source_value,
+                "target_value": r.target_value,
+                "description": r.description,
+            }
+            for r in rows
+        ]
+        return {
+            "source_brand": source_brand,
+            "target_brand": target_brand,
+            "item": item,
+            "mappings": mappings,
+        }
+    finally:
+        db.close()
 
 
 def list_available_documents(brand: str | None = None, category: str | None = None):
