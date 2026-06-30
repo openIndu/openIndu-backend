@@ -112,6 +112,36 @@ def list_available_documents(brand: str | None = None, category: str | None = No
         db.close()
 
 
+def suggest_plc_model(requirements: str, top_k: int = 3):
+    """Search hardware manuals to suggest a suitable PLC model based on project requirements.
+
+    Args:
+        requirements: Natural-language description of project needs
+                      (e.g. 'need 64 DI/DO, Profinet, harsh environment -40°C~70°C').
+        top_k: Number of result chunks to return (default 3).
+    """
+    return _search(requirements, top_k, category="hardware-manual")
+
+
+def compare_plc_specs(brand_a: str, brand_b: str, keyword: str = "", top_k: int = 5):
+    """Compare PLC hardware specifications between two brands.
+
+    Searches the hardware-manual category for each brand and returns results
+    side-by-side so Claude can synthesise a comparison table.
+
+    Args:
+        brand_a: First brand slug (e.g. 'siemens').
+        brand_b: Second brand slug (e.g. 'mitsubishi').
+        keyword: Optional focus keyword (e.g. 'CPU specifications', 'analog input').
+                 Defaults to a broad overview query when omitted.
+        top_k: Number of chunks per brand (default 5).
+    """
+    query = keyword.strip() if keyword.strip() else "CPU specifications overview analog digital IO"
+    results_a = _search(query, top_k, brand_a, "hardware-manual")
+    results_b = _search(query, top_k, brand_b, "hardware-manual")
+    return {brand_a: results_a, brand_b: results_b}
+
+
 def list_available_software(brand: str | None = None, category: str | None = None):
     """List available software from the database, filtered by brand/category."""
     from app.models.software import Software
