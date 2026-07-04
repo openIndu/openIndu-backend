@@ -486,6 +486,64 @@ class BulkPublishSoftwareBody(BaseModel):
     publish: bool = True
 
 
+class BulkDeleteSoftwareBody(BaseModel):
+    version_ids: list[int] | None = None
+    ids: list[int] | None = None
+    brand: str | None = None
+    category: str | None = None
+    keyword: str | None = None
+
+
+@router.delete("/bulk")
+async def bulk_delete_software(body: BulkDeleteSoftwareBody, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    """Bulk-delete software versions (and parent software if no versions remain)."""
+    deleted = 0
+
+    if body.version_ids is not None:
+        if not body.version_ids:
+            raise HTTPException(400, "请选择要删除的版本")
+        versions = db.query(SoftwareVersion).filter(SoftwareVersion.id.in_(body.version_ids)).all()
+    elif body.ids is not None:
+        if not body.ids:
+            raise HTTPException(400, "请选择要删除的软件")
+        versions = db.query(SoftwareVersion).filter(SoftwareVersion.software_id.in_(body.ids)).all()
+    else:
+        # Filter-based: delete ALL matching versions across all softwares
+        vq = db.query(SoftwareVersion).join(Software, SoftwareVersion.software_id == Software.id)
+        if body.brand:
+            vq = vq.filter(Software.brand == body.brand)
+        if body.category:
+            vq = vq.filter(Software.category == body.category)
+        if body.keyword:
+            vq = vq.filter(
+                (SoftwareVersion.original_name.ilike(f"%{body.keyword}%"))
+                | (Software.original_name.ilike(f"%{body.keyword}%"))
+            )
+        versions = vq.all()
+
+    if not versions:
+        return ok({"count": 0}, "没有要删除的版本")
+
+    # Track which software_ids had versions deleted
+    software_ids = set[int]()
+    for ver in versions:
+        storage_service.delete_file(ver.oss_key)
+        software_ids.add(ver.software_id)
+        db.delete(ver)
+        deleted += 1
+
+    # Remove parent software that no longer has any version
+    for sid in software_ids:
+        remaining = db.query(SoftwareVersion).filter(SoftwareVersion.software_id == sid).count()
+        if remaining == 0:
+            sw = db.get(Software, sid)
+            if sw:
+                db.delete(sw)
+
+    db.commit()
+    return ok({"count": deleted}, f"已删除 {deleted} 个版本")
+
+
 @router.patch("/{software_id}/publish")
 async def toggle_publish(software_id: int, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
     """Legacy: toggle publish on ALL versions of a software.
