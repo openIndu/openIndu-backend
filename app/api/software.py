@@ -66,7 +66,7 @@ async def list_software(
     expand_versions: bool = False,
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
-    sort_by: str = Query("upload_time", regex="^(file_size|upload_time|download_count)$"),
+    sort_by: str = Query("upload_time", regex="^(file_size|upload_time|download_count|brand)$"),
     sort_order: str = Query("desc", regex="^(asc|desc)$"),
     db: Session = Depends(get_db)
 ):
@@ -90,7 +90,8 @@ async def list_software(
         sort_column = {
             "file_size": SoftwareVersion.file_size,
             "upload_time": SoftwareVersion.upload_time,
-            "download_count": SoftwareVersion.download_count
+            "download_count": SoftwareVersion.download_count,
+            "brand": Software.brand,
         }[sort_by]
 
         if sort_order == "asc":
