@@ -27,6 +27,7 @@ class CreateTagBody(BaseModel):
 
 
 class UpdateTagBody(BaseModel):
+    value: str | None = None
     label_zh: str | None = None
     is_active: bool | None = None
     sort_order: int | None = None
@@ -110,6 +111,26 @@ async def update_tag(tag_id: int, body: UpdateTagBody, db: Session = Depends(get
     tag = db.query(ResourceTag).filter(ResourceTag.id == tag_id).first()
     if not tag:
         raise HTTPException(404, "标签不存在")
+    if body.value is not None:
+        new_val = body.value.strip()
+        if not new_val:
+            raise HTTPException(400, "value 不能为空")
+        old_val = tag.value
+        tag.value = new_val
+        # Cascade: update all software/docs referencing this tag
+        if tag.type == "sw_brand":
+            db.query(Software).filter(Software.brand == old_val).update({Software.brand: new_val})
+        elif tag.type == "sw_category":
+            db.query(Software).filter(Software.category == old_val).update({Software.category: new_val})
+        elif tag.type == "doc_brand":
+            db.query(Document).filter(Document.brand == old_val).update({Document.brand: new_val})
+        elif tag.type == "doc_category":
+            db.query(Document).filter(Document.category == old_val).update({Document.category: new_val})
+        elif tag.type == "doc_series":
+            db.query(Document).filter(Document.series == old_val).update({Document.series: new_val})
+        # Also update parent_value / brand_value references in other tags
+        db.query(ResourceTag).filter(ResourceTag.parent_value == old_val).update({ResourceTag.parent_value: new_val})
+        db.query(ResourceTag).filter(ResourceTag.brand_value == old_val).update({ResourceTag.brand_value: new_val})
     if body.label_zh is not None:
         if not body.label_zh.strip():
             raise HTTPException(400, "label_zh 不能为空")
