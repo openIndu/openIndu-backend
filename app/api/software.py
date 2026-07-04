@@ -18,7 +18,7 @@ from app.models.user import User
 from app.services.storage_service import storage_service
 
 router = APIRouter(prefix="/software")
-ALLOWED_EXTS = {".zip", ".exe", ".msi", ".rar", ".7z"}
+ALLOWED_EXTS = {".zip", ".exe", ".msi", ".rar", ".7z", ".pkg"}
 
 
 def _ext(filename: str) -> str:
