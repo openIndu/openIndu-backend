@@ -86,25 +86,35 @@ async def list_software(
             vq = vq.filter((SoftwareVersion.original_name.ilike(f"%{keyword}%")) | (Software.original_name.ilike(f"%{keyword}%")))
         total = vq.count()
 
-        # Apply sorting for version-grained listing
-        sort_column = {
-            "file_size": SoftwareVersion.file_size,
-            "upload_time": SoftwareVersion.upload_time,
-            "download_count": SoftwareVersion.download_count,
-            "brand": Software.brand,
-        }[sort_by]
-
-        if sort_order == "asc":
-            vq = vq.order_by(sort_column.asc())
+        # Apply sorting for version-grained listing.
+        # "brand" sorts by Chinese label — do it in Python because the
+        # join-based approach conflicts with SQLAlchemy query structure.
+        reverse = sort_order == "desc"
+        if sort_by == "brand":
+            # Load brand → Chinese name mapping
+            brand_tags = db.query(ResourceTag).filter(ResourceTag.type == "sw_brand").all()
+            brand_label = {t.value: t.label_zh for t in brand_tags}
+            all_rows = vq.all()
+            all_rows.sort(
+                key=lambda v: brand_label.get(v.software.brand, v.software.brand),
+                reverse=reverse,
+            )
+            rows = all_rows[(page - 1) * size : page * size]
         else:
-            vq = vq.order_by(sort_column.desc())
+            sort_col = {
+                "file_size": SoftwareVersion.file_size,
+                "upload_time": SoftwareVersion.upload_time,
+                "download_count": SoftwareVersion.download_count,
+            }[sort_by]
+            if reverse:
+                vq = vq.order_by(sort_col.desc())
+            else:
+                vq = vq.order_by(sort_col.asc())
+            rows = vq.offset((page - 1) * size).limit(size).all()
 
-        rows = vq.offset((page - 1) * size).limit(size).all()
         items = []
         for v in rows:
             s = v.software
-            # On expand rows the user-facing identity is the version, so use the
-            # version's original_name as the row's name and the version's counters.
             items.append({
                 "id": s.id,
                 "filename": v.oss_key.rsplit("/", 1)[-1],
