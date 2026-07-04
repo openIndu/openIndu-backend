@@ -18,7 +18,7 @@ from app.models.user import User
 from app.services.storage_service import storage_service
 
 router = APIRouter(prefix="/software")
-ALLOWED_EXTS = {".zip", ".exe", ".msi", ".rar", ".7z", ".pkg"}
+ALLOWED_EXTS = {".zip", ".exe", ".msi", ".rar", ".7z", ".pkg", ".package"}
 
 
 def _ext(filename: str) -> str:
@@ -314,6 +314,11 @@ async def upload_complete(body: UploadCompleteBody, db: Session = Depends(get_db
         if not sw:
             await run_in_threadpool(storage_service.delete_file, oss_key)
             raise HTTPException(400, "软件不存在")
+        # Check for duplicate version (same filename + brand)
+        existing_ver = db.query(SoftwareVersion).filter(SoftwareVersion.oss_key == oss_key).first()
+        if existing_ver:
+            await run_in_threadpool(storage_service.delete_file, oss_key)
+            raise HTTPException(409, "该版本文件已存在，请更换文件名或版本号后重试")
         try:
             db.add(SoftwareVersion(software_id=sw.id, version=claims["version"], original_name=claims["filename"],
                                    file_size=claims["size"], file_hash=body.file_hash, oss_key=oss_key))
@@ -329,6 +334,11 @@ async def upload_complete(body: UploadCompleteBody, db: Session = Depends(get_db
     sw = Software(filename=oss_key.rsplit("/", 1)[-1], original_name=claims["filename"],
                   brand=claims["brand"], category=claims["category"],
                   latest_version=claims["version"], description=claims.get("description"))
+    # Check for duplicate OSS key before insert
+    existing_ver = db.query(SoftwareVersion).filter(SoftwareVersion.oss_key == oss_key).first()
+    if existing_ver:
+        await run_in_threadpool(storage_service.delete_file, oss_key)
+        raise HTTPException(409, "该版本文件已存在，请更换文件名或版本号后重试")
     try:
         db.add(sw)
         db.flush()
