@@ -85,20 +85,21 @@ async def chat(
         raise HTTPException(status_code=429, detail=f"今日咨询次数已用完（{settings.CHAT_DAILY_LIMIT}次/天）")
 
     # 2. 检索（阻塞调用放线程池，避免卡事件循环）
+    #    传入 history 让向量检索利用上下文，防止多轮对话中品牌/系列漂移
+    history_dicts = [t.model_dump() for t in (body.history or [])]
     filters = {
         "brand": (body.filters or {}).get("brand"),
         "category": (body.filters or {}).get("category"),
     }
     try:
         chunks = await run_in_threadpool(
-            chat_service.retrieve, body.message, settings.RAG_TOP_K, filters
+            chat_service.retrieve, body.message, settings.RAG_TOP_K, filters, history_dicts
         )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=503, detail="知识库暂不可用，请稍后再试") from exc
     sources = chat_service.sources_from(chunks)
 
     # 3. 记一条 chat_log（计入当日配额；token 用量在流结束后回填）
-    history = [t.model_dump() for t in (body.history or [])]
     log = ChatLog(
         user_id=current_user.id,
         ip_address=real_client_ip(request) or "unknown",
@@ -111,7 +112,7 @@ async def chat(
 
     # 4. SSE 流式返回（sources -> delta* -> done）
     return StreamingResponse(
-        chat_service.stream_answer(body.message, history, chunks, sources, log.id),
+        chat_service.stream_answer(body.message, history_dicts, chunks, sources, log.id),
         media_type="text/event-stream",
         headers=_SSE_HEADERS,
     )
@@ -157,14 +158,14 @@ async def chat_session_stream(
         session.title = body.message.strip()[:30]
     db.commit()
 
-    # Retrieval
+    # Retrieval — pass history for cross-turn context continuity
     filters = {
         "brand": (body.filters or {}).get("brand"),
         "category": (body.filters or {}).get("category"),
     }
     try:
         chunks = await run_in_threadpool(
-            chat_service.retrieve, body.message, settings.RAG_TOP_K, filters
+            chat_service.retrieve, body.message, settings.RAG_TOP_K, filters, history
         )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=503, detail="知识库暂不可用，请稍后再试") from exc
