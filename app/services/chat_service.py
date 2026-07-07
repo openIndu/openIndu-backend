@@ -78,17 +78,10 @@ def determine_mode(chunks: list[dict]) -> str:
 
 
 def _enrich_query(message: str, history: list[dict] | None) -> str:
-    """Prepend recent conversation context to the search query so the vector
-    embedding carries brand / series / topic continuity across turns.
-
-    Without this a follow-up like "寄存器地址呢？" searches with *only*
-    that fragment and can surface unrelated documents (e.g. Siemens instead
-    of Mitsubishi FX) — even though the LLM prompt has the full history.
-    """
+    """Manual fallback: prepend recent conversation context to the search query
+    so the vector embedding carries brand / series / topic continuity."""
     if not history:
         return message
-    # Take last user turn + last assistant response (max 200 chars each)
-    # to provide topic keywords without overwhelming the query.
     parts: list[str] = []
     for turn in history[-3:]:
         content = (turn.get("content") or "").strip()
@@ -99,21 +92,69 @@ def _enrich_query(message: str, history: list[dict] | None) -> str:
     return message
 
 
+async def rewrite_query(message: str, history: list[dict] | None) -> str:
+    """Use the LLM to rewrite a multi-turn follow-up into a self-contained
+    search query (e.g. "数据寄存器地址呢？" + history → "三菱 FX3U 数据寄存器
+    地址分配") so the BGE-M3 embedding stays on-topic.
+
+    Falls back to ``_enrich_query`` when the LLM is unavailable or the rewrite
+    returns empty text. The call is cheap: max 100 output tokens with
+    temperature 0 (< 0.5 s).
+    """
+    if not history or not settings.LLM_API_KEY:
+        return _enrich_query(message, history)
+
+    # Build a compact history summary (last 4 turns, 200 chars each)
+    lines: list[str] = []
+    for turn in history[-4:]:
+        role = turn.get("role", "")
+        content = (turn.get("content") or "").strip()
+        if role in ("user", "assistant") and content:
+            label = "用户" if role == "user" else "助手"
+            lines.append(f"{label}: {content[:200]}")
+    if not lines:
+        return message
+
+    rewrite_prompt = (
+        "你是搜索查询改写助手。根据对话历史和用户最新消息，"
+        "生成一个自包含的搜索查询（中文），包含品牌、型号、主题等关键信息。"
+        "只输出查询文本，不要任何解释。\n\n"
+        f"对话历史:\n{chr(10).join(lines)}\n\n"
+        f"用户最新消息: {message}\n\n"
+        "改写后的查询:"
+    )
+
+    try:
+        client = _get_client()
+        response = await client.chat.completions.create(
+            model=settings.LLM_MODEL,
+            messages=[{"role": "user", "content": rewrite_prompt}],
+            temperature=0,
+            max_tokens=100,
+        )
+        rewritten = response.choices[0].message.content
+        if rewritten and rewritten.strip():
+            return rewritten.strip()
+    except Exception:
+        pass  # LLM unavailable → fall through to manual enrichment
+
+    return _enrich_query(message, history)
+
+
 def retrieve(
     message: str,
     top_k: int | None = None,
     filters: dict | None = None,
-    history: list[dict] | None = None,
 ) -> list[dict]:
     """Vector search over the knowledge base. Blocking — call via run_in_threadpool.
 
-    When *history* is provided, recent turns are prepended to the search query
-    so that multi-turn conversations maintain topic / brand / series continuity.
+    The caller should first pass the user message through ``rewrite_query()``
+    (with conversation history) to produce a self-contained search query;
+    then call this function with the rewritten query.
     """
-    query = _enrich_query(message, history)
     where = {k: v for k, v in (filters or {}).items() if v}
     return milvus_service.search(
-        query, top_k=top_k or settings.RAG_TOP_K, where_filter=where or None
+        message, top_k=top_k or settings.RAG_TOP_K, where_filter=where or None
     )
 
 
