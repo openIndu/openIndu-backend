@@ -77,11 +77,43 @@ def determine_mode(chunks: list[dict]) -> str:
     return "grounded"
 
 
-def retrieve(message: str, top_k: int | None = None, filters: dict | None = None) -> list[dict]:
-    """Vector search over the knowledge base. Blocking — call via run_in_threadpool."""
+def _enrich_query(message: str, history: list[dict] | None) -> str:
+    """Prepend recent conversation context to the search query so the vector
+    embedding carries brand / series / topic continuity across turns.
+
+    Without this a follow-up like "寄存器地址呢？" searches with *only*
+    that fragment and can surface unrelated documents (e.g. Siemens instead
+    of Mitsubishi FX) — even though the LLM prompt has the full history.
+    """
+    if not history:
+        return message
+    # Take last user turn + last assistant response (max 200 chars each)
+    # to provide topic keywords without overwhelming the query.
+    parts: list[str] = []
+    for turn in history[-3:]:
+        content = (turn.get("content") or "").strip()
+        if content:
+            parts.append(content[:200])
+    if parts:
+        return " ".join(parts) + " " + message
+    return message
+
+
+def retrieve(
+    message: str,
+    top_k: int | None = None,
+    filters: dict | None = None,
+    history: list[dict] | None = None,
+) -> list[dict]:
+    """Vector search over the knowledge base. Blocking — call via run_in_threadpool.
+
+    When *history* is provided, recent turns are prepended to the search query
+    so that multi-turn conversations maintain topic / brand / series continuity.
+    """
+    query = _enrich_query(message, history)
     where = {k: v for k, v in (filters or {}).items() if v}
     return milvus_service.search(
-        message, top_k=top_k or settings.RAG_TOP_K, where_filter=where or None
+        query, top_k=top_k or settings.RAG_TOP_K, where_filter=where or None
     )
 
 
