@@ -85,15 +85,16 @@ async def chat(
         raise HTTPException(status_code=429, detail=f"今日咨询次数已用完（{settings.CHAT_DAILY_LIMIT}次/天）")
 
     # 2. 检索（阻塞调用放线程池，避免卡事件循环）
-    #    传入 history 让向量检索利用上下文，防止多轮对话中品牌/系列漂移
+    #    先用 LLM 将多轮对话改写为自包含搜索 query，再送入 Milvus
     history_dicts = [t.model_dump() for t in (body.history or [])]
+    rewritten = await chat_service.rewrite_query(body.message, history_dicts)
     filters = {
         "brand": (body.filters or {}).get("brand"),
         "category": (body.filters or {}).get("category"),
     }
     try:
         chunks = await run_in_threadpool(
-            chat_service.retrieve, body.message, settings.RAG_TOP_K, filters, history_dicts
+            chat_service.retrieve, rewritten, settings.RAG_TOP_K, filters
         )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=503, detail="知识库暂不可用，请稍后再试") from exc
@@ -158,14 +159,15 @@ async def chat_session_stream(
         session.title = body.message.strip()[:30]
     db.commit()
 
-    # Retrieval — pass history for cross-turn context continuity
+    # Retrieval — LLM rewrites the query first for cross-turn context
+    rewritten = await chat_service.rewrite_query(body.message, history)
     filters = {
         "brand": (body.filters or {}).get("brand"),
         "category": (body.filters or {}).get("category"),
     }
     try:
         chunks = await run_in_threadpool(
-            chat_service.retrieve, body.message, settings.RAG_TOP_K, filters, history
+            chat_service.retrieve, rewritten, settings.RAG_TOP_K, filters
         )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=503, detail="知识库暂不可用，请稍后再试") from exc

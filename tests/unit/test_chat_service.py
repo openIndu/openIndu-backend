@@ -5,6 +5,23 @@ These cover the pure prompt/source-building logic — no external packages
 """
 from app.services import chat_service
 
+_ORIGINAL_LLM_API_KEY = None
+
+
+def setup_module():
+    """Stash the LLM key so rewrite_query always takes the fallback path."""
+    from app.core.config import settings
+
+    global _ORIGINAL_LLM_API_KEY
+    _ORIGINAL_LLM_API_KEY = settings.LLM_API_KEY
+    settings.LLM_API_KEY = ""
+
+
+def teardown_module():
+    from app.core.config import settings
+
+    settings.LLM_API_KEY = _ORIGINAL_LLM_API_KEY
+
 
 def _chunk(name, page, text, brand="siemens", category="plc-manual", score=0.9):
     return {
@@ -106,3 +123,51 @@ def test_build_messages_grounded_mode_keeps_context():
     msgs = chat_service.build_messages("怎么配 Modbus TCP?", None, chunks, mode="grounded")
     assert "只能依据" in msgs[0]["content"]
     assert "知识库片段" in msgs[-1]["content"]
+
+
+# ── query enrichment / rewriting ──────────────────────────────────────
+
+
+def test_enrich_query_no_history_returns_message():
+    assert chat_service._enrich_query("hello", None) == "hello"
+    assert chat_service._enrich_query("hello", []) == "hello"
+
+
+def test_enrich_query_prepends_context():
+    history = [
+        {"role": "user", "content": "FX 3U Modbus TCP 怎么配置？"},
+        {"role": "assistant", "content": "FX 3U Modbus TCP 配置需要设置 D8120……"},
+    ]
+    result = chat_service._enrich_query("数据寄存器地址呢？", history)
+    assert "FX 3U" in result
+    assert "数据寄存器地址呢？" in result
+    # The current message must be at the end
+    assert result.endswith("数据寄存器地址呢？")
+
+
+def test_enrich_query_truncates_long_content():
+    history = [{"role": "user", "content": "A" * 500}]
+    result = chat_service._enrich_query("msg", history)
+    # Each history turn is capped at 200 chars
+    assert "A" * 250 not in result
+
+
+def test_rewrite_query_fallback_no_llm_key():
+    """When LLM_API_KEY is empty, rewrite_query falls back to _enrich_query."""
+    import asyncio
+
+    history = [
+        {"role": "user", "content": "三菱 FX3U 寄存器"},
+        {"role": "assistant", "content": "D8000 是诊断寄存器……"},
+    ]
+    result = asyncio.run(chat_service.rewrite_query("D8010 呢？", history))
+    # fallback: history text prepended
+    assert "三菱" in result
+    assert "D8010 呢？" in result
+
+
+def test_rewrite_query_no_history_returns_message():
+    import asyncio
+
+    result = asyncio.run(chat_service.rewrite_query("独立问题", None))
+    assert result == "独立问题"
