@@ -37,7 +37,7 @@ class MilvusService:
         results = self._collection.search(
             data=embedding,
             anns_field="embedding",
-            param={"metric_type": "COSINE", "params": {"nprobe": 10}},
+            param={"metric_type": "COSINE", "params": {"nprobe": 128}},
             limit=top_k,
             expr=expr or None,
             output_fields=["text", "document_name", "brand", "category", "page", "chunk_id"],
