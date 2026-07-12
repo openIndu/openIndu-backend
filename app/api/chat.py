@@ -94,7 +94,7 @@ async def chat(
     }
     try:
         chunks = await run_in_threadpool(
-            chat_service.retrieve, rewritten, settings.RAG_TOP_K, filters
+            chat_service.retrieve, db, rewritten, settings.RAG_TOP_K, filters
         )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=503, detail="知识库暂不可用，请稍后再试") from exc
@@ -167,7 +167,7 @@ async def chat_session_stream(
     }
     try:
         chunks = await run_in_threadpool(
-            chat_service.retrieve, rewritten, settings.RAG_TOP_K, filters
+            chat_service.retrieve, db, rewritten, settings.RAG_TOP_K, filters
         )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=503, detail="知识库暂不可用，请稍后再试") from exc

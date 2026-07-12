@@ -12,7 +12,10 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from sqlalchemy.orm import Session
+
 from app.core.config import settings
+from app.models.resource_tag import ResourceTag
 from app.services.milvus_service import milvus_service
 
 # 最多带入的历史轮数（user/assistant 合计），防止 prompt 过长
@@ -141,7 +144,33 @@ async def rewrite_query(message: str, history: list[dict] | None) -> str:
     return _enrich_query(message, history)
 
 
+def _extract_brand(db: Session, query: str) -> str | None:
+    """Keyword-match a single registered brand (value or Chinese label) into
+    the query text. Zero or 2+ matches -> None (ambiguous — don't filter).
+
+    Deliberately not an LLM call: this runs on every request (unlike
+    ``rewrite_query()``, which skips the LLM when there's no history), so a
+    cheap keyword match against the ~17 registered brands (resource_tags,
+    type=doc_brand) keeps latency/cost at zero. See prod/rag-optimization-design.md
+    §4 Step 4 for the tradeoff discussion.
+    """
+    tags = (
+        db.query(ResourceTag.value, ResourceTag.label_zh)
+        .filter(ResourceTag.type == "doc_brand", ResourceTag.is_active.is_(True))
+        .all()
+    )
+    q_lower = query.lower()
+    matched: set[str] = set()
+    for value, label_zh in tags:
+        if value and value.lower() in q_lower:
+            matched.add(value)
+        elif label_zh and label_zh in query:
+            matched.add(value)
+    return matched.pop() if len(matched) == 1 else None
+
+
 def retrieve(
+    db: Session,
     message: str,
     top_k: int | None = None,
     filters: dict | None = None,
@@ -151,11 +180,31 @@ def retrieve(
     The caller should first pass the user message through ``rewrite_query()``
     (with conversation history) to produce a self-contained search query;
     then call this function with the rewritten query.
+
+    If the caller didn't already pin a brand (``filters["brand"]``), this
+    auto-extracts one from the query text and narrows the ANN search to it —
+    a wrong auto-extraction only costs one retry, never a missed answer:
+    when the brand-filtered search comes back empty or below the grounded
+    threshold, it's re-run unfiltered and that result is used instead. An
+    explicit caller-supplied brand filter is trusted as-is (no retry) since
+    that reflects deliberate user intent, not a guess.
     """
     where = {k: v for k, v in (filters or {}).items() if v}
-    return milvus_service.search(
-        message, top_k=top_k or settings.RAG_TOP_K, where_filter=where or None
-    )
+    auto_extracted = False
+    if not where.get("brand"):
+        auto_brand = _extract_brand(db, message)
+        if auto_brand:
+            where["brand"] = auto_brand
+            auto_extracted = True
+
+    top_k = top_k or settings.RAG_TOP_K
+    chunks = milvus_service.search(message, top_k=top_k, where_filter=where or None)
+
+    if auto_extracted and (not chunks or chunks[0]["score"] < _FALLBACK_SCORE_THRESHOLD):
+        unfiltered = {k: v for k, v in where.items() if k != "brand"}
+        chunks = milvus_service.search(message, top_k=top_k, where_filter=unfiltered or None)
+
+    return chunks
 
 
 def sources_from(chunks: list[dict]) -> list[dict]:
