@@ -171,3 +171,54 @@ def test_rewrite_query_no_history_returns_message():
 
     result = asyncio.run(chat_service.rewrite_query("独立问题", None))
     assert result == "独立问题"
+
+
+class _FakeTagQuery:
+    """Mimics db.query(ResourceTag.value, ResourceTag.label_zh).filter(...).all()
+    without a real DB — _extract_brand's logic under test doesn't depend on
+    SQLAlchemy behavior, just on the (value, label_zh) rows it gets back."""
+
+    def __init__(self, rows):
+        self._rows = rows
+
+    def filter(self, *args, **kwargs):
+        return self
+
+    def all(self):
+        return self._rows
+
+
+class _FakeDB:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def query(self, *args, **kwargs):
+        return _FakeTagQuery(self._rows)
+
+
+_BRAND_ROWS = [
+    ("mitsubishi", "三菱"),
+    ("siemens", "西门子"),
+    ("ckd", "CKD"),
+    ("abb", "ABB"),
+]
+
+
+def test_extract_brand_matches_chinese_label():
+    db = _FakeDB(_BRAND_ROWS)
+    assert chat_service._extract_brand(db, "三菱FX3U怎么接线") == "mitsubishi"
+
+
+def test_extract_brand_matches_english_slug_case_insensitive():
+    db = _FakeDB(_BRAND_ROWS)
+    assert chat_service._extract_brand(db, "Siemens S7-1200 modbus 配置") == "siemens"
+
+
+def test_extract_brand_no_match_returns_none():
+    db = _FakeDB(_BRAND_ROWS)
+    assert chat_service._extract_brand(db, "怎么选型伺服驱动器") is None
+
+
+def test_extract_brand_ambiguous_multiple_matches_returns_none():
+    db = _FakeDB(_BRAND_ROWS)
+    assert chat_service._extract_brand(db, "三菱和CKD哪个更好") is None
