@@ -1,5 +1,6 @@
 """FastAPI Web REST application on port 8004."""
 import logging
+import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
@@ -128,3 +129,16 @@ for router in [auth.router, users.router, stats.router, admin.router, documents.
 @app.get("/api/v1/health")
 async def health():
     return {"code": 200, "message": "ok", "data": {"service": "openIndu-backend-web", "timestamp": datetime.now(timezone.utc).isoformat()}}
+
+
+@app.get("/api/v1/version")
+async def version() -> dict:
+    return {
+        "code": 200,
+        "message": "ok",
+        "data": {
+            "version": os.environ.get("APP_VERSION", app.version),
+            "git_commit": os.environ.get("GIT_COMMIT", "unknown"),
+            "build_time": os.environ.get("BUILD_TIME", "unknown"),
+        },
+    }
