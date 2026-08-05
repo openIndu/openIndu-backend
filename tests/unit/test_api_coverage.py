@@ -1,10 +1,9 @@
 """Focused API/helper coverage for coverage gate."""
 import asyncio
 import io
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock
-import uuid
 
 import pytest
 from fastapi import HTTPException
@@ -38,7 +37,7 @@ def test_brand_mapping_helpers():
 
     assert brand_mapping.ok({"x": 1})["data"] == {"x": 1}
     assert asyncio.run(brand_mapping.overview(user=_user()))["data"]["siemens"]
-    mapped = asyncio.run(brand_mapping.address("siemens", "omron", "D0", user=_user()))
+    mapped = asyncio.run(brand_mapping.address("siemens", "omron", "D0", user=_user(), db=MagicMock()))
     assert mapped["data"]["item"] == "D0"
 
 
@@ -70,7 +69,7 @@ def test_documents_list_upload_get(monkeypatch):
     doc = SimpleNamespace(id=1, oss_key="docs/a.pdf", original_name="a.pdf")
     doc.to_dict = lambda: {"id": doc.id}
     db.query.return_value = _chain(items=[doc], count=1)
-    result = asyncio.run(documents.list_documents(brand="siemens", keyword="a", page=1, size=20, db=db))
+    result = asyncio.run(documents.list_documents(brand="siemens", keyword="a", page=1, size=20, sort_by="upload_time", sort_order="desc", db=db))
     assert result["data"]["total"] == 1
 
     db = MagicMock()
@@ -172,7 +171,7 @@ def test_software_responses_do_not_expose_legacy_series():
     )
     db = MagicMock()
     db.query.return_value = _chain(items=[version], count=1)
-    result = asyncio.run(software.list_software(expand_versions=True, page=1, size=20, db=db))
+    result = asyncio.run(software.list_software(expand_versions=True, page=1, size=20, sort_by="upload_time", sort_order="desc", db=db))
     assert "series" not in result["data"]["items"][0]
 
 
@@ -350,7 +349,7 @@ def test_users_helpers_and_actions():
 
     db = MagicMock()
     db.query.return_value = _chain(items=[target], count=1)
-    result = asyncio.run(users.list_users(page=1, size=20, db=db, admin=_user()))
+    result = asyncio.run(users.list_users(page=1, size=20, sort_by="created_at", sort_order="desc", db=db, admin=_user()))
     assert result["data"]["total"] == 1
 
 
@@ -392,8 +391,8 @@ def test_files_api_creates_debug_placeholder(tmp_path, monkeypatch):
 
 
 def test_storage_service_facade_paths(monkeypatch):
-    from app.services.storage_service import StorageService
     from app.services import storage_service as module
+    from app.services.storage_service import StorageService
 
     local_impl = MagicMock()
     local_impl.upload_file.return_value = {"filename": "a.pdf"}
@@ -538,8 +537,8 @@ def test_auth_service_verify_code(monkeypatch):
 
 
 def test_auth_service_send_code(monkeypatch):
+
     from app.services.auth_service import AuthService
-    from fastapi import HTTPException
 
     monkeypatch.setattr("app.services.auth_service.settings", SimpleNamespace(
         SMS_MOCK_ENABLED=True, SMS_MOCK_CODE="123456", JWT_SECRET_KEY="test-key-123",
@@ -554,8 +553,9 @@ def test_auth_service_send_code(monkeypatch):
 
 
 def test_auth_service_login(monkeypatch):
-    from app.services.auth_service import AuthService
     from fastapi import HTTPException
+
+    from app.services.auth_service import AuthService
 
     monkeypatch.setattr("app.services.auth_service.settings", SimpleNamespace(
         SMS_MOCK_ENABLED=True, SMS_MOCK_CODE="123456", JWT_SECRET_KEY="test-key-123",
@@ -630,7 +630,6 @@ def test_auth_service_logout(monkeypatch):
 
 
 def test_decode_token(monkeypatch):
-    from app.services.auth_service import decode_token
 
     monkeypatch.setattr("app.services.auth_service.settings", SimpleNamespace(
         JWT_SECRET_KEY="test-key-123", JWT_ALGORITHM="HS256"
@@ -644,14 +643,12 @@ def test_utcnnow():
 
 
 def test_models():
-    from app.models import user
-    from app.models import document
-    from app.models import software
     assert True
 
 
 def _direct_upload_token(claims_extra: dict) -> str:
     from jose import jwt
+
     from app.core.config import settings
     claims = {"oss_key": "software/siemens/abc.zip", "filename": "t.zip", "brand": "siemens",
               "category": "utility", "version": "1.0", "description": "",
@@ -691,6 +688,7 @@ def test_software_direct_upload_init_multipart(monkeypatch):
     assert len(data["part_urls"]) == 2
     assert data["part_urls"][1] == "https://oss/part2"
     from jose import jwt
+
     from app.core.config import settings
     claims = jwt.decode(data["token"], settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
     assert claims["mode"] == "multipart"
@@ -716,9 +714,14 @@ def test_software_direct_upload_init_single(monkeypatch):
 def test_software_direct_upload_complete_multipart(monkeypatch):
     from app.api import software
     from app.services import oss_service as oss_mod
+    from app.services.storage_service import storage_service as _ss
+    monkeypatch.setattr(_ss, "_backend", "s3")
     monkeypatch.setattr(oss_mod.oss_service, "complete_multipart_upload", lambda *a, **k: None)
+    monkeypatch.setattr(oss_mod.oss_service, "head_object", lambda *a, **k: True)
+    monkeypatch.setattr(oss_mod.oss_service, "delete_file", lambda *a, **k: None)
     token = _direct_upload_token({"mode": "multipart", "upload_id": "uid-1"})
     db = MagicMock()
+    db.query.return_value = _chain(first=None)
     db.flush = lambda: None
     parts = [software.UploadPartResult(part_number=2, etag="B"), software.UploadPartResult(part_number=1, etag="A")]
     body = software.UploadCompleteBody(token=token, parts=parts)
@@ -729,9 +732,13 @@ def test_software_direct_upload_complete_multipart(monkeypatch):
 def test_software_direct_upload_complete_single(monkeypatch):
     from app.api import software
     from app.services import oss_service as oss_mod
+    from app.services.storage_service import storage_service as _ss
+    monkeypatch.setattr(_ss, "_backend", "s3")
     monkeypatch.setattr(oss_mod.oss_service, "head_object", lambda *a, **k: True)
+    monkeypatch.setattr(oss_mod.oss_service, "delete_file", lambda *a, **k: None)
     token = _direct_upload_token({"mode": "single"})
     db = MagicMock()
+    db.query.return_value = _chain(first=None)
     db.flush = lambda: None
     body = software.UploadCompleteBody(token=token)
     assert asyncio.run(software.upload_complete(body, db=db, admin=_user()))["message"] == "上传成功"
@@ -740,6 +747,8 @@ def test_software_direct_upload_complete_single(monkeypatch):
 def test_software_direct_upload_complete_single_missing(monkeypatch):
     from app.api import software
     from app.services import oss_service as oss_mod
+    from app.services.storage_service import storage_service as _ss
+    monkeypatch.setattr(_ss, "_backend", "s3")
     monkeypatch.setattr(oss_mod.oss_service, "head_object", lambda *a, **k: False)
     token = _direct_upload_token({"mode": "single"})
     with pytest.raises(HTTPException):
@@ -749,6 +758,8 @@ def test_software_direct_upload_complete_single_missing(monkeypatch):
 def test_software_direct_upload_abort(monkeypatch):
     from app.api import software
     from app.services import oss_service as oss_mod
+    from app.services.storage_service import storage_service as _ss
+    monkeypatch.setattr(_ss, "_backend", "s3")
     called = {}
     monkeypatch.setattr(oss_mod.oss_service, "abort_multipart_upload", lambda *a, **k: called.setdefault("aborted", True))
     token = _direct_upload_token({"mode": "multipart", "upload_id": "uid-1"})
