@@ -126,4 +126,5 @@ for router in [auth.router, users.router, stats.router, admin.router, documents.
 
 @app.get("/api/v1/health")
 async def health():
-    return {"code": 200, "message": "ok", "data": {"service": "openIndu-backend-web"}}
+    from datetime import datetime, timezone
+    return {"code": 200, "message": "ok", "data": {"service": "openIndu-backend-web", "timestamp": datetime.now(timezone.utc).isoformat()}}
