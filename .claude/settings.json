@@ -1,0 +1,13 @@
+{
+  "extraKnownMarketplaces": {
+    "openindu": {
+      "source": {
+        "source": "github",
+        "repo": "openIndu/control-tower"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "openindu-control-tower@openindu": true
+  }
+}
