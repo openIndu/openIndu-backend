@@ -718,8 +718,10 @@ def test_software_direct_upload_complete_multipart(monkeypatch):
     monkeypatch.setattr(_ss, "_backend", "s3")
     monkeypatch.setattr(oss_mod.oss_service, "complete_multipart_upload", lambda *a, **k: None)
     monkeypatch.setattr(oss_mod.oss_service, "head_object", lambda *a, **k: True)
+    monkeypatch.setattr(oss_mod.oss_service, "delete_file", lambda *a, **k: None)
     token = _direct_upload_token({"mode": "multipart", "upload_id": "uid-1"})
     db = MagicMock()
+    db.query.return_value = _chain(first=None)
     db.flush = lambda: None
     parts = [software.UploadPartResult(part_number=2, etag="B"), software.UploadPartResult(part_number=1, etag="A")]
     body = software.UploadCompleteBody(token=token, parts=parts)
@@ -733,8 +735,10 @@ def test_software_direct_upload_complete_single(monkeypatch):
     from app.services.storage_service import storage_service as _ss
     monkeypatch.setattr(_ss, "_backend", "s3")
     monkeypatch.setattr(oss_mod.oss_service, "head_object", lambda *a, **k: True)
+    monkeypatch.setattr(oss_mod.oss_service, "delete_file", lambda *a, **k: None)
     token = _direct_upload_token({"mode": "single"})
     db = MagicMock()
+    db.query.return_value = _chain(first=None)
     db.flush = lambda: None
     body = software.UploadCompleteBody(token=token)
     assert asyncio.run(software.upload_complete(body, db=db, admin=_user()))["message"] == "上传成功"
