@@ -1,0 +1,2 @@
+# Reviewed false positive: deterministic JWT value used only by CI tests.
+b1a5fb4b99992389b4d755a3161bf6c1fd30d125:.github/workflows/ci.yml:generic-api-key:64
