@@ -1,0 +1,22 @@
+# Gitleaks configuration — extends the bundled default ruleset.
+# CI runs: gitleaks git /repo --redact=100 --verbose  (full history)
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Reviewed non-secrets: fixtures and local-only compose values"
+paths = [
+  '''(^|/)__tests__/''',
+  '''(^|/)e2e/''',
+  '''(^|/)tests?/''',
+  '''.*\.test\.(t|j)sx?$''',
+  '''.*\.spec\.(t|j)sx?$''',
+  '''(^|/)\.env\.example$''',
+]
+regexTarget = "match"
+regexes = [
+  # Local Docker Compose internal service address, e.g. web-api:8004 — not a credential
+  '''(web-api|localhost|127\.0\.0\.1):[0-9]{4}''',
+  # Documented placeholder secrets in templates
+  '''change-me[-a-z]*''',
+]
