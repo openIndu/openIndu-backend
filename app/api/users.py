@@ -27,11 +27,8 @@ def _enrich_user_dict(db: Session, user_dict: dict, user_id: int) -> dict:
 
     The session picked is the last session whose ``ip_address`` is a real
     (public) address — private / loopback / docker-bridge IPs are skipped so the
-    admin UI doesn't display dev-stack noise. This matters because the local dev
-    stack points at the production DB (see ``project_local_stack_remote_db``):
-    a developer hitting ``localhost:3001`` while logged in as the admin user
-    would otherwise stamp ``172.19.0.1`` (docker default gateway) onto that
-    user's row, which is meaningless for production audit.
+    admin UI doesn't display dev-stack noise (e.g. a login from ``localhost``
+    stamping the docker default-gateway IP ``172.19.0.1`` onto the row).
     """
     active_session = db.query(LoginSession).filter(
         LoginSession.user_id == user_id,
