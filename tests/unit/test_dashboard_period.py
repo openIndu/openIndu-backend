@@ -4,9 +4,10 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app.api.stats import (
-    _today_range_utc,
     _month_range_utc,
     _to_naive_utc,
+    _today_range_utc,
+    _trailing_12_months,
     CST,
 )
 
@@ -71,3 +72,44 @@ class TestMonthRangeUtc:
         prev = start - timedelta(days=1)
         # prev must be < start (strictly before this month)
         assert prev < start
+
+
+class TestTrailing12Months:
+    """Shared window for yearly_* dashboard series and /stats/geo-distribution?range=year."""
+
+    def test_twelve_months_oldest_first_ending_this_month(self):
+        months, _ = _trailing_12_months()
+        assert len(months) == 12
+
+        today_cst = datetime.now(CST).date()
+        assert months[-1] == (today_cst.year, today_cst.month)
+
+        # consecutive, wrapping year boundaries correctly
+        for (y1, m1), (y2, m2) in zip(months, months[1:]):
+            if m1 == 12:
+                assert (y2, m2) == (y1 + 1, 1)
+            else:
+                assert (y2, m2) == (y1, m1 + 1)
+
+    def test_year_start_utc_is_naive_first_of_oldest_month(self):
+        months, year_start_utc = _trailing_12_months()
+        assert year_start_utc.tzinfo is None
+
+        expected = _to_naive_utc(datetime(months[0][0], months[0][1], 1, tzinfo=CST))
+        assert year_start_utc == expected
+
+    def test_year_window_is_not_the_month_window(self):
+        """The trailing-12-month start must be strictly earlier than this month's
+        start — i.e. range=year on /stats/geo-distribution can never silently
+        collapse onto range=month's window."""
+        _, year_start_utc = _trailing_12_months()
+        month_start, _ = _month_range_utc()
+        assert year_start_utc < month_start
+        # exactly 11 calendar months earlier, not some other arbitrary offset
+        months, _ = _trailing_12_months()
+        oldest_year, oldest_month = months[0]
+        today_cst = datetime.now(CST).date()
+        advanced_month = oldest_month + 11
+        advanced_year = oldest_year + (advanced_month - 1) // 12
+        advanced_month = (advanced_month - 1) % 12 + 1
+        assert (advanced_year, advanced_month) == (today_cst.year, today_cst.month)

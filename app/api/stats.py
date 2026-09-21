@@ -1,5 +1,6 @@
 """Online statistics and dashboard API."""
 from datetime import datetime, timedelta, timezone
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, or_
@@ -7,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_db, require_admin
 from app.core.utils import iso_utc, mask_phone, ok
+from app.models.admin_audit_log import AdminAuditLog
 from app.models.chat_message import ChatMessage
 from app.models.document import Document
 from app.models.login_session import LoginSession
@@ -48,6 +50,30 @@ def _month_range_utc() -> tuple[datetime, datetime]:
     return (_to_naive_utc(start_cst), _to_naive_utc(end_cst))
 
 
+def _trailing_12_months() -> tuple[list[tuple[int, int]], datetime]:
+    """Return (months, year_start_utc) for the trailing 12 months ending this month (CST).
+
+    ``months`` is oldest-first [(year, month), ...], length 12. ``year_start_utc``
+    is the 1st of the oldest month, 00:00 CST, as naive UTC. This is the single
+    shared window used by every yearly_* series on the dashboard and by
+    GET /stats/geo-distribution?range=year — compute it once, reuse it, never
+    re-derive it independently.
+    """
+    today_cst = datetime.now(CST).date()
+    months: list[tuple[int, int]] = []
+    y, m = today_cst.year, today_cst.month
+    for _ in range(12):
+        months.append((y, m))
+        m -= 1
+        if m == 0:
+            m = 12
+            y -= 1
+    months.reverse()
+
+    year_start_cst = datetime(months[0][0], months[0][1], 1, tzinfo=CST)
+    return months, _to_naive_utc(year_start_cst)
+
+
 def _visitor_key():
     """Browser visitor key for UV: client_id first, historical rows by IP."""
     return func.coalesce(VisitEvent.client_id, func.concat("ip:", VisitEvent.ip_address))
@@ -78,6 +104,133 @@ def _uv_count(db: Session, start: datetime | None = None, end: datetime | None =
     if end is not None:
         q = q.filter(VisitEvent.created_at < end)
     return q.with_entities(func.count(func.distinct(_visitor_key()))).scalar() or 0
+
+
+def _month_new_members_count(db: Session, start: datetime, end: datetime) -> int:
+    """Count member approvals (AdminAuditLog action=member_approve) in [start, end).
+
+    Source of truth for "when did someone become a member" is the audit-log row
+    written at approval time (app/api/member_applications.py's approve()) — NOT
+    User.member_apply_at, which is the application timestamp and isn't updated
+    on approval, so it can fall in a different month than the actual approval.
+    """
+    return (
+        db.query(func.count(AdminAuditLog.id))
+        .filter(
+            AdminAuditLog.action == "member_approve",
+            AdminAuditLog.created_at >= start,
+            AdminAuditLog.created_at < end,
+        )
+        .scalar()
+        or 0
+    )
+
+
+def _yearly_registrations(db: Session, year_start_utc: datetime, months: list[tuple[int, int]]) -> list[dict[str, int | str]]:
+    """New user signups per month, trailing 12 months — same bucketing as yearly_pv/yearly_uv."""
+    rows = (
+        db.query(
+            func.to_char(User.created_at, "YYYY-MM").label("ym"),
+            func.count(User.id).label("cnt"),
+        )
+        .filter(User.created_at >= year_start_utc)
+        .group_by("ym")
+        .all()
+    )
+    reg_map = {r.ym: r.cnt for r in rows}
+    return [{"date": f"{yy:04d}-{mm:02d}", "count": reg_map.get(f"{yy:04d}-{mm:02d}", 0)} for yy, mm in months]
+
+
+def _yearly_new_members(db: Session, year_start_utc: datetime, months: list[tuple[int, int]]) -> list[dict[str, int | str]]:
+    """Member approvals per month, trailing 12 months — same bucketing as yearly_pv/yearly_uv."""
+    rows = (
+        db.query(
+            func.to_char(AdminAuditLog.created_at, "YYYY-MM").label("ym"),
+            func.count(AdminAuditLog.id).label("cnt"),
+        )
+        .filter(
+            AdminAuditLog.action == "member_approve",
+            AdminAuditLog.created_at >= year_start_utc,
+        )
+        .group_by("ym")
+        .all()
+    )
+    approve_map = {r.ym: r.cnt for r in rows}
+    return [{"date": f"{yy:04d}-{mm:02d}", "count": approve_map.get(f"{yy:04d}-{mm:02d}", 0)} for yy, mm in months]
+
+
+def _geo_distribution(db: Session, start: datetime, end: datetime) -> list[dict[str, int | float | str]]:
+    """Geo-distribution rows for visit_events in [start, end).
+
+    Anonymous and authenticated visits are counted independently against
+    ip_address (anon) / user_id (auth) so the two columns are honest and never
+    need subtraction guards. Shared by the dashboard's (month-scoped, for
+    back-compat) geo_distribution field and by GET /stats/geo-distribution
+    (day/month/year selectable). Per-entry shape: name, country_code, lat, lng,
+    visitors, registrations, online, anonymous.
+    """
+    geo: dict[str, dict[str, int | float | str]] = {}
+    anon_geo_rows = (
+        db.query(
+            VisitEvent.geo_location.label("name"),
+            VisitEvent.country_code.label("country_code"),
+            func.count(func.distinct(VisitEvent.ip_address)).label("anonymous"),
+        )
+        .filter(
+            VisitEvent.user_id.is_(None),
+            VisitEvent.created_at >= start,
+            VisitEvent.created_at < end,
+        )
+        .group_by(VisitEvent.geo_location, VisitEvent.country_code)
+        .all()
+    )
+    for row in anon_geo_rows:
+        name = row.name or "未知"
+        point = lookup_point(name, row.country_code)
+        geo[name] = {
+            "name": name,
+            "country_code": row.country_code or point["country_code"],
+            "lat": point["lat"],
+            "lng": point["lng"],
+            "visitors": int(row.anonymous or 0),  # legacy field — total dot weight; populated by both buckets below
+            "registrations": 0,
+            "online": 0,
+            "anonymous": int(row.anonymous or 0),
+        }
+
+    auth_geo_rows = (
+        db.query(
+            VisitEvent.geo_location.label("name"),
+            VisitEvent.country_code.label("country_code"),
+            func.count(func.distinct(VisitEvent.user_id)).label("authenticated"),
+        )
+        .filter(
+            VisitEvent.user_id.isnot(None),
+            VisitEvent.created_at >= start,
+            VisitEvent.created_at < end,
+        )
+        .group_by(VisitEvent.geo_location, VisitEvent.country_code)
+        .all()
+    )
+    for row in auth_geo_rows:
+        name = row.name or "未知"
+        point = lookup_point(name, row.country_code)
+        auth_n = int(row.authenticated or 0)
+        entry = geo.setdefault(name, {
+            "name": name,
+            "country_code": row.country_code or point["country_code"],
+            "lat": point["lat"],
+            "lng": point["lng"],
+            "visitors": 0,
+            "registrations": 0,
+            "online": 0,
+            "anonymous": 0,
+        })
+        entry["online"] = int(entry["online"]) + auth_n  # "online" is the legacy field name the map renders for the auth bucket
+        entry["registrations"] = int(entry["registrations"]) + auth_n
+        entry["visitors"] = int(entry["visitors"]) + auth_n
+
+    return sorted(geo.values(), key=lambda x: -(int(x["anonymous"]) + int(x["online"])))
 
 
 @router.get("/dashboard")
@@ -136,72 +289,10 @@ async def dashboard_stats(db: Session = Depends(get_db), admin: User = Depends(r
     current_5m_pv = _pv_count(db, online_cutoff)
     current_5m_uv = _uv_count(db, online_cutoff)
 
-    # Geo distribution — based on this-month visit_events, split cleanly by
-    # whether the visit was authenticated. Anonymous and authenticated buckets
-    # are counted independently against ip_address (anon) / user_id (auth) so
-    # the two columns are honest and never need subtraction guards.
-    geo: dict[str, dict[str, int | float | str]] = {}
-    anon_geo_rows = (
-        db.query(
-            VisitEvent.geo_location.label("name"),
-            VisitEvent.country_code.label("country_code"),
-            func.count(func.distinct(VisitEvent.ip_address)).label("anonymous"),
-        )
-        .filter(
-            VisitEvent.user_id.is_(None),
-            VisitEvent.created_at >= month_start,
-            VisitEvent.created_at < month_end,
-        )
-        .group_by(VisitEvent.geo_location, VisitEvent.country_code)
-        .all()
-    )
-    for row in anon_geo_rows:
-        name = row.name or "未知"
-        point = lookup_point(name, row.country_code)
-        geo[name] = {
-            "name": name,
-            "country_code": row.country_code or point["country_code"],
-            "lat": point["lat"],
-            "lng": point["lng"],
-            "visitors": int(row.anonymous or 0),  # legacy field — total dot weight; populated by both buckets below
-            "registrations": 0,
-            "online": 0,
-            "anonymous": int(row.anonymous or 0),
-        }
-
-    auth_geo_rows = (
-        db.query(
-            VisitEvent.geo_location.label("name"),
-            VisitEvent.country_code.label("country_code"),
-            func.count(func.distinct(VisitEvent.user_id)).label("authenticated"),
-        )
-        .filter(
-            VisitEvent.user_id.isnot(None),
-            VisitEvent.created_at >= month_start,
-            VisitEvent.created_at < month_end,
-        )
-        .group_by(VisitEvent.geo_location, VisitEvent.country_code)
-        .all()
-    )
-    for row in auth_geo_rows:
-        name = row.name or "未知"
-        point = lookup_point(name, row.country_code)
-        auth_n = int(row.authenticated or 0)
-        entry = geo.setdefault(name, {
-            "name": name,
-            "country_code": row.country_code or point["country_code"],
-            "lat": point["lat"],
-            "lng": point["lng"],
-            "visitors": 0,
-            "registrations": 0,
-            "online": 0,
-            "anonymous": 0,
-        })
-        entry["online"] = int(entry["online"]) + auth_n  # "online" is the legacy field name the map renders for the auth bucket
-        entry["registrations"] = int(entry["registrations"]) + auth_n
-        entry["visitors"] = int(entry["visitors"]) + auth_n
-
-    geo_list = sorted(geo.values(), key=lambda x: -(int(x["anonymous"]) + int(x["online"])))
+    # Geo distribution — this-month visit_events window (kept month-scoped here
+    # for back-compat; see _geo_distribution() for the shared implementation,
+    # also used by GET /stats/geo-distribution for the day/month/year toggle).
+    geo_list = _geo_distribution(db, month_start, month_end)
 
     current_active_users = db.query(func.count(func.distinct(LoginSession.user_id))).filter(
         LoginSession.is_active.is_(True)
@@ -247,6 +338,8 @@ async def dashboard_stats(db: Session = Depends(get_db), admin: User = Depends(r
         Software.created_at >= month_start,
         Software.created_at < month_end,
     ).scalar() or 0
+
+    month_new_members = _month_new_members_count(db, month_start, month_end)
 
     # ---- monthly trends (1st to today, zero-filled) ----
     today_cst = datetime.now(CST).date()
@@ -364,18 +457,7 @@ async def dashboard_stats(db: Session = Depends(get_db), admin: User = Depends(r
     # ---- yearly anonymous visit trend (last 12 months, by month) ----
     # 365 daily points are too dense to render readably, so we aggregate by
     # month. Window: from the 1st of "11 months ago" through today, inclusive.
-    months: list[tuple[int, int]] = []
-    y, m = today_cst.year, today_cst.month
-    for _ in range(12):
-        months.append((y, m))
-        m -= 1
-        if m == 0:
-            m = 12
-            y -= 1
-    months.reverse()
-
-    year_start_cst = datetime(months[0][0], months[0][1], 1, tzinfo=CST)
-    year_start_utc = _to_naive_utc(year_start_cst)
+    months, year_start_utc = _trailing_12_months()
 
     yearly_anon_rows = (
         db.query(
@@ -438,6 +520,11 @@ async def dashboard_stats(db: Session = Depends(get_db), admin: User = Depends(r
     ]
     yearly_visitors = yearly_uv
 
+    # Last 12 months, new user signups / member approvals — same window and
+    # to_char/dict-zero-fill bucketing as yearly_pv/yearly_uv above.
+    yearly_registrations = _yearly_registrations(db, year_start_utc, months)
+    yearly_new_members = _yearly_new_members(db, year_start_utc, months)
+
     return ok({
         "total_users": total_users,
         "total_docs": total_docs,
@@ -472,6 +559,7 @@ async def dashboard_stats(db: Session = Depends(get_db), admin: User = Depends(r
         "month_new_users": month_new_users,
         "month_new_docs": month_new_docs,
         "month_new_software": month_new_software,
+        "month_new_members": month_new_members,
         "monthly_registrations": monthly_registrations,
         "monthly_visitors": monthly_visitors,
         "monthly_pv": monthly_pv,
@@ -482,7 +570,32 @@ async def dashboard_stats(db: Session = Depends(get_db), admin: User = Depends(r
         "yearly_visitors": yearly_visitors,
         "yearly_pv": yearly_pv,
         "yearly_uv": yearly_uv,
+        "yearly_registrations": yearly_registrations,
+        "yearly_new_members": yearly_new_members,
     })
+
+
+@router.get("/geo-distribution")
+async def geo_distribution_stats(
+    range: Literal["day", "month", "year"] = Query("month"),
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    """Geo distribution for a selectable window, independent of the dashboard's fixed month scope.
+
+    range=day -> today (CST, same window as the dashboard's today_* fields);
+    month -> this calendar month (CST, same window as the dashboard's
+    geo_distribution field); year -> trailing 12 months (same year_start_utc
+    as the dashboard's yearly_* series), through now.
+    """
+    if range == "day":
+        start, end = _today_range_utc()
+    elif range == "year":
+        _, year_start_utc = _trailing_12_months()
+        start, end = year_start_utc, _now()
+    else:
+        start, end = _month_range_utc()
+    return ok({"geo_distribution": _geo_distribution(db, start, end)})
 
 
 @router.get("/online")
