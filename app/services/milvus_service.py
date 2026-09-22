@@ -24,7 +24,7 @@ class MilvusService:
         connections.connect(alias="default", host=settings.MILVUS_HOST, port=settings.MILVUS_PORT)
         self._collection = Collection(settings.MILVUS_COLLECTION)
         self._collection.load()
-        self._embedding_model = SentenceTransformer("BAAI/bge-m3", device="cpu")
+        self._embedding_model = SentenceTransformer(settings.EMBEDDING_MODEL, device="cpu")
 
     def search(self, query: str, top_k: int = 5, where_filter: dict[str, Any] | None = None) -> list[dict]:
         self._ensure_ready()
