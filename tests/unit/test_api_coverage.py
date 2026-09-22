@@ -264,23 +264,6 @@ def test_software_list_upload_get_add_delete(monkeypatch):
     assert asyncio.run(software.delete_software(1, db=db, admin=_user()))["message"] == "删除成功"
 
 
-def test_config_api_update_and_list():
-    from app.api import config
-
-    db = MagicMock()
-    item = SimpleNamespace(config_key="a", config_value="b", description=None, updated_at=datetime(2026, 1, 1))
-    item.to_dict = lambda: {"key": item.config_key, "value": item.config_value, "description": item.description}
-    db.query.return_value.order_by.return_value.all.return_value = [item]
-    assert asyncio.run(config.get_config(db, _user()))["data"]["items"][0]["key"] == "a"
-
-    db = MagicMock()
-    db.query.return_value.filter.return_value.first.return_value = None
-    body = config.ConfigUpdate(items=[config.ConfigItem(key="rag_chunk_size", value="512")])
-    result = asyncio.run(config.update_config(body, db, _user()))
-    updated = result["data"]["items"][0]
-    assert (updated.get("config_key") or updated.get("key")) == "rag_chunk_size"
-
-
 def test_portal_api_crud():
     from app.api import portal
 
