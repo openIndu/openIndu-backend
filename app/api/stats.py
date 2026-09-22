@@ -107,15 +107,19 @@ def _uv_count(db: Session, start: datetime | None = None, end: datetime | None =
 
 
 def _month_new_members_count(db: Session, start: datetime, end: datetime) -> int:
-    """Count member approvals (AdminAuditLog action=member_approve) in [start, end).
+    """Count distinct members approved (AdminAuditLog action=member_approve) in [start, end).
 
     Source of truth for "when did someone become a member" is the audit-log row
     written at approval time (app/api/member_applications.py's approve()) — NOT
     User.member_apply_at, which is the application timestamp and isn't updated
     on approval, so it can fall in a different month than the actual approval.
+
+    Counts distinct target_user_id, not raw rows: an ordinary demote-then-
+    reapprove admin action writes a second member_approve row for the same
+    user within the same window, which must not double-count as two members.
     """
     return (
-        db.query(func.count(AdminAuditLog.id))
+        db.query(func.count(func.distinct(AdminAuditLog.target_user_id)))
         .filter(
             AdminAuditLog.action == "member_approve",
             AdminAuditLog.created_at >= start,
@@ -142,11 +146,16 @@ def _yearly_registrations(db: Session, year_start_utc: datetime, months: list[tu
 
 
 def _yearly_new_members(db: Session, year_start_utc: datetime, months: list[tuple[int, int]]) -> list[dict[str, int | str]]:
-    """Member approvals per month, trailing 12 months — same bucketing as yearly_pv/yearly_uv."""
+    """Distinct members approved per month, trailing 12 months — same bucketing as yearly_pv/yearly_uv.
+
+    Counts distinct target_user_id per month, not raw rows — see
+    _month_new_members_count for why (demote-then-reapprove writes a second
+    member_approve row for the same user).
+    """
     rows = (
         db.query(
             func.to_char(AdminAuditLog.created_at, "YYYY-MM").label("ym"),
-            func.count(AdminAuditLog.id).label("cnt"),
+            func.count(func.distinct(AdminAuditLog.target_user_id)).label("cnt"),
         )
         .filter(
             AdminAuditLog.action == "member_approve",

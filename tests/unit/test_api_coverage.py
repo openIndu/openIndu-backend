@@ -355,6 +355,33 @@ def test_stats_month_new_members_count():
     assert stats._month_new_members_count(db, start, end) == 0
 
 
+def test_stats_month_new_members_count_deduplicates_by_target_user():
+    """Regression test: a demote-then-reapprove writes 2 member_approve rows
+    for the same user in one window; the count must not double them.
+
+    The tests above mock db.query()'s *return value* unconditionally, so they
+    pass identically whether the query counts raw rows or distinct users —
+    they would not have caught this bug. This test instead inspects the
+    actual SQL construct passed to db.query(), the way it would render with
+    a real dialect, so a regression back to plain func.count(AdminAuditLog.id)
+    fails it.
+    """
+    from app.api import stats
+
+    db = MagicMock()
+    q = _chain()
+    q.scalar.return_value = 1
+    db.query.return_value = q
+    start, end = datetime(2026, 9, 1), datetime(2026, 10, 1)
+
+    stats._month_new_members_count(db, start, end)
+
+    count_expr = db.query.call_args[0][0]
+    rendered = str(count_expr.compile(compile_kwargs={"literal_binds": True}))
+    assert "DISTINCT" in rendered.upper()
+    assert "target_user_id" in rendered
+
+
 def test_stats_yearly_registrations_and_new_members_bucketing():
     from app.api import stats
 
