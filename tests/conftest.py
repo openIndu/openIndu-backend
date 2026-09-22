@@ -29,7 +29,6 @@ import app.models.portal_content  # noqa
 import app.models.sms_code  # noqa
 import app.models.software  # noqa
 import app.models.sync_log  # noqa
-import app.models.system_config  # noqa
 import app.models.token_blacklist  # noqa
 import app.models.user  # noqa
 import app.models.visit_event  # noqa

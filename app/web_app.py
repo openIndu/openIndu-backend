@@ -17,7 +17,6 @@ from app.api import (
     brand_mapping,
     chat,
     chat_sessions,
-    config,
     documents,
     files,
     member_applications,
@@ -46,7 +45,6 @@ from app.models.resource_tag import ResourceTag  # noqa: F401
 from app.models.sms_code import SmsCode  # noqa: F401
 from app.models.software import Software, SoftwareVersion  # noqa: F401
 from app.models.sync_log import SyncLog  # noqa: F401
-from app.models.system_config import SystemConfig  # noqa: F401
 from app.models.token_blacklist import TokenBlacklist  # noqa: F401
 from app.models.user import User  # noqa: F401
 from app.models.visit_event import VisitEvent  # noqa: F401
@@ -121,7 +119,7 @@ app.add_middleware(SlowAPIMiddleware)
 app.add_middleware(OnlineStatsMiddleware)
 app.add_middleware(TokenBlacklistMiddleware)
 
-for router in [auth.router, users.router, stats.router, admin.router, documents.router, software.router, sync.router, config.router, brand_mapping.router, files.router, visits.router, portal.router, tags.router, chat.router, chat_sessions.router, member_applications.router]:
+for router in [auth.router, users.router, stats.router, admin.router, documents.router, software.router, sync.router, brand_mapping.router, files.router, visits.router, portal.router, tags.router, chat.router, chat_sessions.router, member_applications.router]:
     app.include_router(router, prefix="/api/v1")
 
 
