@@ -27,6 +27,11 @@ class Settings(BaseSettings):
     MILVUS_HOST: str = "localhost"
     MILVUS_PORT: int = 19530
     MILVUS_COLLECTION: str = "plc_knowledge"
+    # Same model name openIndu-studio's local-rag-mcp tooling defaults to —
+    # naming-convention alignment only (issue #199 D1): neither repo reads
+    # from or calls the other, and nothing detects drift if this default
+    # and studio's diverge later.
+    EMBEDDING_MODEL: str = "BAAI/bge-m3"
 
     JWT_SECRET_KEY: str = "change-me-in-production"
     JWT_ALGORITHM: str = "HS256"

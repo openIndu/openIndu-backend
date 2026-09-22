@@ -38,7 +38,7 @@ def _get_embedding_model():
             logger.info("CUDA available — using GPU for embeddings.")
         else:
             logger.info("CUDA not available — using CPU for embeddings.")
-        _embedding_model = SentenceTransformer("BAAI/bge-m3", device=device, local_files_only=True)
+        _embedding_model = SentenceTransformer(settings.EMBEDDING_MODEL, device=device, local_files_only=True)
         logger.info("BGE-M3 model loaded.")
     return _embedding_model
 
