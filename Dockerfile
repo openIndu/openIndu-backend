@@ -23,7 +23,11 @@ RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
 # Split out so a sqlalchemy bump (in tier 2) doesn't force the registry
 # to ship torch all over again.
 COPY requirements-heavy.txt .
+# Query embedding runs on CPU. Install the CPU wheel first so the unconstrained
+# sentence-transformers dependency does not pull the much larger CUDA runtime.
+RUN pip install torch==2.6.0 --index-url https://download.pytorch.org/whl/cpu
 RUN pip install -r requirements-heavy.txt
+RUN python -c "import torch, sentence_transformers; assert torch.version.cuda is None"
 
 # === Tier 2: app deps that change occasionally (~200 MB) ==========
 COPY requirements-app.txt .
