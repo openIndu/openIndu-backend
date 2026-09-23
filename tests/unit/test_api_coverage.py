@@ -324,6 +324,222 @@ def test_stats_and_sync_apis(monkeypatch):
     assert result["data"]["status"] == "queued"
 
 
+def _grouped_chain(items):
+    """_chain() with .group_by() also wired into the fluent chain.
+
+    The shared _chain() helper above doesn't chain .group_by() (none of its
+    existing callers needed it); stats.py's group-by queries do
+    .filter().group_by().all(), so this wires .group_by() to return the same
+    mock instead of a fresh, unconfigured one.
+    """
+    q = _chain(items=items)
+    q.group_by.return_value = q
+    return q
+
+
+def test_stats_month_new_members_count():
+    from app.api import stats
+
+    db = MagicMock()
+    q = _chain()
+    q.scalar.return_value = 5
+    db.query.return_value = q
+    start, end = datetime(2026, 9, 1), datetime(2026, 10, 1)
+    assert stats._month_new_members_count(db, start, end) == 5
+
+    # No matching rows -> scalar() is None -> falls back to 0, same "or 0"
+    # convention as every other count field in this module.
+    q2 = _chain()
+    q2.scalar.return_value = None
+    db.query.return_value = q2
+    assert stats._month_new_members_count(db, start, end) == 0
+
+
+def test_stats_month_new_members_count_deduplicates_by_target_user():
+    """Regression test: a demote-then-reapprove writes 2 member_approve rows
+    for the same user in one window; the count must not double them.
+
+    The tests above mock db.query()'s *return value* unconditionally, so they
+    pass identically whether the query counts raw rows or distinct users —
+    they would not have caught this bug. This test instead inspects the
+    actual SQL construct passed to db.query(), the way it would render with
+    a real dialect, so a regression back to plain func.count(AdminAuditLog.id)
+    fails it.
+    """
+    from app.api import stats
+
+    db = MagicMock()
+    q = _chain()
+    q.scalar.return_value = 1
+    db.query.return_value = q
+    start, end = datetime(2026, 9, 1), datetime(2026, 10, 1)
+
+    stats._month_new_members_count(db, start, end)
+
+    count_expr = db.query.call_args[0][0]
+    rendered = str(count_expr.compile(compile_kwargs={"literal_binds": True}))
+    assert "DISTINCT" in rendered.upper()
+    assert "target_user_id" in rendered
+
+
+def test_stats_yearly_registrations_and_new_members_bucketing():
+    from app.api import stats
+
+    months = [(2026, 7), (2026, 8), (2026, 9)]
+    year_start_utc = datetime(2026, 7, 1)
+
+    db = MagicMock()
+    db.query.return_value = _grouped_chain([SimpleNamespace(ym="2026-08", cnt=3)])
+    assert stats._yearly_registrations(db, year_start_utc, months) == [
+        {"date": "2026-07", "count": 0},
+        {"date": "2026-08", "count": 3},
+        {"date": "2026-09", "count": 0},
+    ]
+
+    db2 = MagicMock()
+    db2.query.return_value = _grouped_chain([SimpleNamespace(ym="2026-09", cnt=7)])
+    assert stats._yearly_new_members(db2, year_start_utc, months) == [
+        {"date": "2026-07", "count": 0},
+        {"date": "2026-08", "count": 0},
+        {"date": "2026-09", "count": 7},
+    ]
+
+
+def test_stats_geo_distribution_merges_anon_and_auth_buckets():
+    """_geo_distribution is the block extracted out of dashboard_stats() so both
+    it and GET /stats/geo-distribution share one implementation. Exercise the
+    anon-only, auth-only, and appears-in-both merge cases together."""
+    from app.api import stats
+
+    db = MagicMock()
+    db.query.side_effect = [
+        _grouped_chain([
+            SimpleNamespace(name="四川 成都", country_code="CN", anonymous=3),
+            SimpleNamespace(name="美国", country_code="US", anonymous=1),
+        ]),
+        _grouped_chain([
+            SimpleNamespace(name="四川 成都", country_code="CN", authenticated=2),
+            SimpleNamespace(name="北京", country_code="CN", authenticated=4),
+        ]),
+    ]
+
+    result = stats._geo_distribution(db, datetime(2026, 9, 1), datetime(2026, 10, 1))
+    by_name = {r["name"]: r for r in result}
+
+    assert by_name["四川 成都"]["anonymous"] == 3
+    assert by_name["四川 成都"]["online"] == 2
+    assert by_name["四川 成都"]["registrations"] == 2
+    assert by_name["四川 成都"]["visitors"] == 5  # anon(3) seeded, then auth bucket adds 2
+    assert by_name["美国"]["anonymous"] == 1
+    assert by_name["美国"]["online"] == 0
+    assert by_name["北京"]["anonymous"] == 0
+    assert by_name["北京"]["online"] == 4
+    assert by_name["北京"]["registrations"] == 4
+    # sorted by -(anonymous+online) desc: 四川(3+2=5) > 北京(0+4=4) > 美国(1+0=1)
+    assert [r["name"] for r in result] == ["四川 成都", "北京", "美国"]
+
+
+def test_dashboard_stats_wires_new_fields_and_reuses_geo_helper(monkeypatch):
+    """dashboard_stats() must expose month_new_members/yearly_registrations/
+    yearly_new_members under exactly those keys, and must still populate
+    geo_distribution (back-compat) via the extracted _geo_distribution() helper
+    with its original month-scoped window — not a full DB-shape assertion
+    (that's covered by the helper-level tests above), just correct wiring."""
+    from app.api import stats
+
+    chain = MagicMock()
+    chain.filter.return_value = chain
+    chain.join.return_value = chain
+    chain.group_by.return_value = chain
+    chain.order_by.return_value = chain
+    chain.offset.return_value = chain
+    chain.limit.return_value = chain
+    chain.with_entities.return_value = chain
+    chain.scalar.return_value = 0
+    chain.all.return_value = []
+    chain.first.return_value = None
+    chain.count.return_value = 0
+    db = MagicMock()
+    db.query.return_value = chain
+
+    geo_sentinel = [{"name": "四川", "country_code": "CN", "lat": 30.6, "lng": 102.0,
+                      "visitors": 3, "registrations": 2, "online": 2, "anonymous": 1}]
+    geo_calls = []
+
+    def fake_geo(db_arg, start, end):
+        geo_calls.append((db_arg, start, end))
+        return geo_sentinel
+
+    yearly_calls = {}
+
+    def fake_yearly_registrations(db_arg, year_start_utc, months):
+        yearly_calls["registrations"] = (db_arg, year_start_utc, months)
+        return [{"date": "2026-09", "count": 5}]
+
+    def fake_yearly_new_members(db_arg, year_start_utc, months):
+        yearly_calls["new_members"] = (db_arg, year_start_utc, months)
+        return [{"date": "2026-09", "count": 2}]
+
+    monkeypatch.setattr(stats, "_geo_distribution", fake_geo)
+    monkeypatch.setattr(stats, "_month_new_members_count", lambda db_arg, start, end: 4)
+    monkeypatch.setattr(stats, "_yearly_registrations", fake_yearly_registrations)
+    monkeypatch.setattr(stats, "_yearly_new_members", fake_yearly_new_members)
+
+    result = asyncio.run(stats.dashboard_stats(db=db, admin=_user()))
+    data = result["data"]
+
+    assert data["month_new_members"] == 4
+    assert data["yearly_registrations"] == [{"date": "2026-09", "count": 5}]
+    assert data["yearly_new_members"] == [{"date": "2026-09", "count": 2}]
+    # back-compat: geo_distribution is still populated, still month-scoped
+    assert data["geo_distribution"] == geo_sentinel
+    assert len(geo_calls) == 1
+    called_db, called_start, called_end = geo_calls[0]
+    assert called_db is db
+    expected_month_start, expected_month_end = stats._month_range_utc()
+    assert (called_start, called_end) == (expected_month_start, expected_month_end)
+
+    # yearly_registrations/yearly_new_members must reuse the SAME months/
+    # year_start_utc dashboard_stats() already computed for yearly_pv/yearly_uv,
+    # not a second independent computation.
+    assert yearly_calls["registrations"][1:] == yearly_calls["new_members"][1:]
+    expected_months, expected_year_start_utc = stats._trailing_12_months()
+    assert yearly_calls["registrations"][1] == expected_year_start_utc
+    assert yearly_calls["registrations"][2] == expected_months
+
+
+def test_geo_distribution_endpoint_windows_per_range(monkeypatch):
+    """GET /stats/geo-distribution must pick a genuinely different window per
+    range value, not the month window with a different label."""
+    from app.api import stats
+
+    captured = []
+
+    def fake_geo(db_arg, start, end):
+        captured.append((start, end))
+        return []
+
+    monkeypatch.setattr(stats, "_geo_distribution", fake_geo)
+    db = MagicMock()
+
+    asyncio.run(stats.geo_distribution_stats(range="month", db=db, admin=_user()))
+    expected_month = stats._month_range_utc()
+    assert captured[-1] == expected_month
+
+    asyncio.run(stats.geo_distribution_stats(range="day", db=db, admin=_user()))
+    expected_day = stats._today_range_utc()
+    assert captured[-1] == expected_day
+    assert captured[-1] != expected_month
+
+    before = datetime.utcnow()
+    asyncio.run(stats.geo_distribution_stats(range="year", db=db, admin=_user()))
+    year_start, year_end = captured[-1]
+    _, expected_year_start = stats._trailing_12_months()
+    assert year_start == expected_year_start
+    assert year_start != expected_month[0]
+    assert abs((year_end - before).total_seconds()) < 5
+
+
 def test_users_helpers_and_actions():
     from app.api import users
 
