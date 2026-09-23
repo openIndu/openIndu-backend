@@ -152,6 +152,8 @@ class TestDocumentUpload:
             assert data["data"]["original_name"] == "test.pdf"
             assert data["data"]["brand"] == "siemens"
             assert data["data"]["category"] == "plc-manual"
+            assert "sync_status" not in data["data"]
+            assert "sync_time" not in data["data"]
 
     def test_upload_not_pdf(self):
         """Uploading a non-PDF file should fail."""
@@ -225,6 +227,17 @@ class TestBrandsAndCategories:
         categories = response.json()["data"]
         assert "plc-manual" in categories
         assert "best-practice" in categories
+
+
+def test_document_sync_routes_are_not_registered():
+    """Website exposes document storage operations, not indexing controls."""
+    from app.web_app import app
+
+    paths = {route.path for route in app.routes}
+    assert "/api/v1/sync/trigger" not in paths
+    assert "/api/v1/sync/status" not in paths
+    assert "/api/v1/sync/logs" not in paths
+    assert "/api/v1/documents/{doc_id}/sync" not in paths
 
 
 class TestDocumentPublish:

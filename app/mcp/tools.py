@@ -103,7 +103,6 @@ def list_available_documents(brand: str | None = None, category: str | None = No
                 "name": d.original_name,
                 "brand": d.brand,
                 "category": d.category,
-                "sync_status": d.sync_status,
             }
             for d in docs
         ]

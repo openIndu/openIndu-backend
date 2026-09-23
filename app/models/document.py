@@ -37,8 +37,6 @@ class Document(Base):
             "oss_key": self.oss_key,
             "description": self.description,
             "download_count": self.download_count,
-            "sync_status": self.sync_status,
             "is_published": self.is_published,
             "upload_time": iso_utc(self.upload_time),
-            "sync_time": iso_utc(self.sync_time),
         }
