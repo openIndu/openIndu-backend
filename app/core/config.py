@@ -62,15 +62,10 @@ class Settings(BaseSettings):
     PRESIGNED_URL_EXPIRE_MINUTES: int = 5
     DOCUMENT_MAX_SIZE_MB: int = 50
     SOFTWARE_MAX_SIZE_GB: int = 5
+    # Legacy env keys remain accepted so existing .env files keep loading.
+    # Website no longer registers or exposes document indexing jobs.
     RAG_SYNC_INTERVAL_MINUTES: int = 60
-    # Whether the in-process APScheduler registers the OSS → Milvus sync job
-    # at startup. Production sets this to ``false`` so resource-constrained
-    # nodes don't run the expensive BGE-M3 embedding cycle every hour;
-    # syncs are triggered manually instead (POST /sync/trigger, the admin UI
-    # button, or scripts/sync_local.py from the aggregate repo). The two
-    # lightweight cleanup jobs (sessions, expired tokens) always run — they
-    # cost almost nothing and dashboard "current online" depends on them.
-    RAG_SYNC_ENABLED: bool = True
+    RAG_SYNC_ENABLED: bool = False
 
     # --- 智能咨询 / RAG 对话（§4.3.12）---
     # 生成模型走 OpenAI 兼容协议（默认 DeepSeek，可切通义等），换厂商只改这些 env。
