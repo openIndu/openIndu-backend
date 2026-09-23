@@ -130,6 +130,28 @@ def _month_new_members_count(db: Session, start: datetime, end: datetime) -> int
     )
 
 
+def _monthly_new_members(
+    db: Session, start: datetime, end: datetime, dates: list[str]
+) -> list[dict[str, int | str]]:
+    """Distinct member approvals per day for the current-month chart."""
+    rows = (
+        db.query(
+            func.date(AdminAuditLog.created_at).label("day"),
+            func.count(func.distinct(AdminAuditLog.target_user_id)).label("cnt"),
+        )
+        .filter(
+            AdminAuditLog.action == "member_approve",
+            AdminAuditLog.created_at >= start,
+            AdminAuditLog.created_at < end,
+        )
+        .group_by(func.date(AdminAuditLog.created_at))
+        .order_by(func.date(AdminAuditLog.created_at))
+        .all()
+    )
+    approve_map = {str(row.day): row.cnt for row in rows}
+    return [{"date": day, "count": approve_map.get(day, 0)} for day in dates]
+
+
 def _yearly_registrations(db: Session, year_start_utc: datetime, months: list[tuple[int, int]]) -> list[dict[str, int | str]]:
     """New user signups per month, trailing 12 months — same bucketing as yearly_pv/yearly_uv."""
     rows = (
@@ -381,6 +403,13 @@ async def dashboard_stats(db: Session = Depends(get_db), admin: User = Depends(r
     for item in monthly_registrations:
         item["count"] = reg_map.get(item["date"], 0)
 
+    monthly_new_members = _monthly_new_members(
+        db,
+        month_start,
+        month_end,
+        [str(month_start_cst_date + timedelta(days=i)) for i in range(month_days)],
+    )
+
     # All page views (PV) per day.
     pv_month_rows = (
         db.query(
@@ -571,6 +600,7 @@ async def dashboard_stats(db: Session = Depends(get_db), admin: User = Depends(r
         "month_new_software": month_new_software,
         "month_new_members": month_new_members,
         "monthly_registrations": monthly_registrations,
+        "monthly_new_members": monthly_new_members,
         "monthly_visitors": monthly_visitors,
         "monthly_pv": monthly_pv,
         "monthly_uv": monthly_uv,
