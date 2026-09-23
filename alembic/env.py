@@ -15,7 +15,6 @@ from app.models.portal_content import PortalContent  # noqa: F401
 from app.models.sms_code import SmsCode  # noqa: F401
 from app.models.software import Software, SoftwareVersion  # noqa: F401
 from app.models.sync_log import SyncLog  # noqa: F401
-from app.models.system_config import SystemConfig  # noqa: F401
 from app.models.token_blacklist import TokenBlacklist  # noqa: F401
 from app.models.user import User  # noqa: F401
 
