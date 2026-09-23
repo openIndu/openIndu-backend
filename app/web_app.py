@@ -23,7 +23,6 @@ from app.api import (
     portal,
     software,
     stats,
-    sync,
     tags,
     users,
     visits,
@@ -48,11 +47,11 @@ from app.models.sync_log import SyncLog  # noqa: F401
 from app.models.token_blacklist import TokenBlacklist  # noqa: F401
 from app.models.user import User  # noqa: F401
 from app.models.visit_event import VisitEvent  # noqa: F401
-from app.tasks.sync_task import SyncScheduler
+from app.tasks.maintenance_task import MaintenanceScheduler
 
 logger = logging.getLogger(__name__)
 limiter = Limiter(key_func=get_remote_address, default_limits=["50/second"])
-scheduler = SyncScheduler()
+scheduler = MaintenanceScheduler()
 
 
 def _init_milvus_collection() -> None:
@@ -119,7 +118,7 @@ app.add_middleware(SlowAPIMiddleware)
 app.add_middleware(OnlineStatsMiddleware)
 app.add_middleware(TokenBlacklistMiddleware)
 
-for router in [auth.router, users.router, stats.router, admin.router, documents.router, software.router, sync.router, brand_mapping.router, files.router, visits.router, portal.router, tags.router, chat.router, chat_sessions.router, member_applications.router]:
+for router in [auth.router, users.router, stats.router, admin.router, documents.router, software.router, brand_mapping.router, files.router, visits.router, portal.router, tags.router, chat.router, chat_sessions.router, member_applications.router]:
     app.include_router(router, prefix="/api/v1")
 
 

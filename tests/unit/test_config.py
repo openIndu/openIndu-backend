@@ -63,4 +63,3 @@ class TestSettings:
             assert s.PRESIGNED_URL_EXPIRE_MINUTES == 5
             assert s.DOCUMENT_MAX_SIZE_MB == 50
             assert s.SOFTWARE_MAX_SIZE_GB == 5
-            assert s.RAG_SYNC_INTERVAL_MINUTES == 60

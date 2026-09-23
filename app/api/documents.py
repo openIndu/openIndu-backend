@@ -1,24 +1,20 @@
 """Document CRUD and presigned download-link API."""
-import logging
 from datetime import date, datetime
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.database import SessionLocal
 from app.core.dependencies import get_db, require_admin, require_member
 from app.core.utils import ok
 from app.models.document import Document
 from app.models.download_log import DownloadLog
 from app.models.resource_tag import ResourceTag
 from app.models.user import User
-from app.services.rag_sync_service import sync_document
 from app.services.storage_service import storage_service
 
-logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/documents")
 
 
@@ -82,36 +78,6 @@ def _file_size(file: UploadFile) -> int:
     size = stream.tell()
     stream.seek(pos)
     return size
-
-
-def _sync_uploaded_document(doc_id: int):
-    db = None
-    try:
-        db = SessionLocal()
-        doc = db.query(Document).filter(Document.id == doc_id).first()
-        if not doc:
-            return
-        doc.sync_status = "syncing"
-        db.commit()
-        sync_document(db, doc)
-        doc.sync_status = "synced"
-        doc.sync_time = datetime.utcnow()
-        db.commit()
-    except Exception as exc:
-        logger.error("Document %s background sync failed: %s", doc_id, exc)
-        if db:
-            try:
-                db.rollback()
-                doc = db.query(Document).filter(Document.id == doc_id).first()
-                if doc:
-                    doc.sync_status = "failed"
-                    doc.sync_time = datetime.utcnow()
-                    db.commit()
-            except Exception as inner_exc:
-                logger.error("Failed to update sync_status for doc %s: %s", doc_id, inner_exc)
-    finally:
-        if db:
-            db.close()
 
 
 def client_ip(request: Request) -> str | None:
@@ -326,27 +292,6 @@ async def toggle_publish(doc_id: int, db: Session = Depends(get_db), admin: User
     db.commit()
     db.refresh(doc)
     return ok(doc.to_dict(), "发布状态已更新")
-
-
-@router.post("/{doc_id}/sync")
-async def sync_document_endpoint(doc_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
-    # When RAG sync is disabled this backend must not run BGE-M3 embedding —
-    # the node is resource-constrained on purpose. Syncs are produced offline
-    # and pushed to Milvus separately. Reject manual triggers too, not just
-    # the scheduler, so a button click can't quietly spin up the embedding
-    # stack here. 503 = "this capability is intentionally off on this host".
-    if not settings.RAG_SYNC_ENABLED:
-        raise HTTPException(503, "本环境已关闭 RAG 同步（RAG_SYNC_ENABLED=false），请在离线环境同步后导入向量")
-    doc = db.query(Document).filter(Document.id == doc_id).first()
-    if not doc:
-        raise HTTPException(404, "文档不存在")
-    if doc.sync_status == "syncing":
-        raise HTTPException(409, "文档正在同步中，请稍后再试")
-    doc.sync_status = "syncing"
-    db.commit()
-    db.refresh(doc)
-    background_tasks.add_task(_sync_uploaded_document, doc_id)
-    return ok(doc.to_dict(), "同步已启动")
 
 
 @router.delete("/{doc_id}")

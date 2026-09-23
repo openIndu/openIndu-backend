@@ -284,8 +284,8 @@ def test_portal_api_crud():
     assert asyncio.run(portal.delete_solution(1, db, _user()))["message"] == "删除成功"
 
 
-def test_stats_and_sync_apis(monkeypatch):
-    from app.api import stats, sync
+def test_stats_apis(monkeypatch):
+    from app.api import stats
 
     session = SimpleNamespace(user_id=1, geo_location="CN", ip_address="127.0.0.1", user_agent="ua", last_active_at=datetime(2026, 1, 1), is_active=True)
     db = MagicMock()
@@ -297,15 +297,6 @@ def test_stats_and_sync_apis(monkeypatch):
     lh_q.count.return_value = 1
     lh_q.offset.return_value.limit.return_value.all.return_value = []
     assert asyncio.run(stats.login_history(page=1, size=20, keyword=None, status=None, db=db, admin=_user()))["data"]["total"] == 1
-
-    db = MagicMock()
-    db.query.return_value.all.return_value = [("pending",), ("synced",), ("synced",)]
-    assert asyncio.run(sync.sync_status(db, _user()))["data"]["documents"]["synced"] == 2
-    bg = MagicMock()
-    result = asyncio.run(sync.trigger_sync(bg, sync.TriggerBody(), _user()))
-    assert result["data"]["mode"] == "incremental"
-    assert result["data"]["status"] == "queued"
-
 
 def _grouped_chain(items):
     """_chain() with .group_by() also wired into the fluent chain.
