@@ -248,7 +248,8 @@ async def dashboard_stats(db: Session = Depends(get_db), admin: User = Depends(r
     thirty_days_ago = now - timedelta(days=30)
     online_cutoff = now - timedelta(minutes=5)
 
-    total_users = db.query(func.count(User.id)).scalar() or 0
+    # Match the user list; historical registration trends still include deleted users.
+    total_users = db.query(func.count(User.id)).filter(User.deleted_at.is_(None)).scalar() or 0
     total_docs = db.query(func.count(Document.id)).scalar() or 0
     total_software = db.query(func.count(Software.id)).scalar() or 0
     new_users_30d = db.query(func.count(User.id)).filter(User.created_at >= thirty_days_ago).scalar() or 0
