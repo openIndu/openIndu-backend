@@ -365,6 +365,33 @@ def test_stats_month_new_members_count_deduplicates_by_target_user():
     assert "target_user_id" in rendered
 
 
+def test_stats_monthly_new_members_zero_fills_and_deduplicates_by_day():
+    from app.api import stats
+
+    db = MagicMock()
+    db.query.return_value = _grouped_chain(
+        [
+            SimpleNamespace(day=datetime(2026, 9, 2).date(), cnt=3),
+        ]
+    )
+    result = stats._monthly_new_members(
+        db,
+        datetime(2026, 8, 31, 16),
+        datetime(2026, 9, 30, 16),
+        ["2026-09-01", "2026-09-02", "2026-09-03"],
+    )
+
+    assert result == [
+        {"date": "2026-09-01", "count": 0},
+        {"date": "2026-09-02", "count": 3},
+        {"date": "2026-09-03", "count": 0},
+    ]
+    count_expr = db.query.call_args[0][1]
+    rendered = str(count_expr.compile(compile_kwargs={"literal_binds": True}))
+    assert "DISTINCT" in rendered.upper()
+    assert "target_user_id" in rendered
+
+
 def test_stats_yearly_registrations_and_new_members_bucketing():
     from app.api import stats
 
@@ -423,8 +450,8 @@ def test_stats_geo_distribution_merges_anon_and_auth_buckets():
 
 
 def test_dashboard_stats_wires_new_fields_and_reuses_geo_helper(monkeypatch):
-    """dashboard_stats() must expose month_new_members/yearly_registrations/
-    yearly_new_members under exactly those keys, and must still populate
+    """dashboard_stats() must expose monthly/yearly member trend fields and
+    must still populate
     geo_distribution (back-compat) via the extracted _geo_distribution() helper
     with its original month-scoped window — not a full DB-shape assertion
     (that's covered by the helper-level tests above), just correct wiring."""
@@ -465,6 +492,11 @@ def test_dashboard_stats_wires_new_fields_and_reuses_geo_helper(monkeypatch):
 
     monkeypatch.setattr(stats, "_geo_distribution", fake_geo)
     monkeypatch.setattr(stats, "_month_new_members_count", lambda db_arg, start, end: 4)
+    monkeypatch.setattr(
+        stats,
+        "_monthly_new_members",
+        lambda db_arg, start, end, dates: [{"date": "2026-09-01", "count": 2}],
+    )
     monkeypatch.setattr(stats, "_yearly_registrations", fake_yearly_registrations)
     monkeypatch.setattr(stats, "_yearly_new_members", fake_yearly_new_members)
 
@@ -472,6 +504,7 @@ def test_dashboard_stats_wires_new_fields_and_reuses_geo_helper(monkeypatch):
     data = result["data"]
 
     assert data["month_new_members"] == 4
+    assert data["monthly_new_members"] == [{"date": "2026-09-01", "count": 2}]
     assert data["yearly_registrations"] == [{"date": "2026-09", "count": 5}]
     assert data["yearly_new_members"] == [{"date": "2026-09", "count": 2}]
     # back-compat: geo_distribution is still populated, still month-scoped
