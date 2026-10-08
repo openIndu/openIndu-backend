@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import func, or_
+from sqlalchemy import func, literal_column, or_
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_db, require_admin
@@ -20,6 +20,16 @@ from app.services.geo_service import lookup_point
 router = APIRouter(prefix="/stats")
 
 CST = timezone(timedelta(hours=8))  # Asia/Shanghai
+
+
+def _cst_day(timestamp):
+    """Group a naive UTC database timestamp by its Asia/Shanghai date."""
+    return func.date(timestamp + literal_column("INTERVAL '8 hours'"))
+
+
+def _cst_month(timestamp):
+    """Group a naive UTC database timestamp by its Asia/Shanghai month."""
+    return func.to_char(timestamp + literal_column("INTERVAL '8 hours'"), "YYYY-MM")
 
 
 def _now():
@@ -80,11 +90,10 @@ def _visitor_key():
 
 
 def _quality_visit_query(db: Session):
-    """Default dashboard visit scope: real page views, excluding local/unknown."""
+    """Count consented page views even when IP geolocation is unavailable."""
     return db.query(VisitEvent).filter(
         VisitEvent.event_type == "page_view",
         VisitEvent.geo_location.is_distinct_from("本地开发"),
-        VisitEvent.geo_location.is_distinct_from("未知"),
     )
 
 
@@ -136,7 +145,7 @@ def _monthly_new_members(
     """Distinct member approvals per day for the current-month chart."""
     rows = (
         db.query(
-            func.date(AdminAuditLog.created_at).label("day"),
+            _cst_day(AdminAuditLog.created_at).label("day"),
             func.count(func.distinct(AdminAuditLog.target_user_id)).label("cnt"),
         )
         .filter(
@@ -144,8 +153,8 @@ def _monthly_new_members(
             AdminAuditLog.created_at >= start,
             AdminAuditLog.created_at < end,
         )
-        .group_by(func.date(AdminAuditLog.created_at))
-        .order_by(func.date(AdminAuditLog.created_at))
+        .group_by(_cst_day(AdminAuditLog.created_at))
+        .order_by(_cst_day(AdminAuditLog.created_at))
         .all()
     )
     approve_map = {str(row.day): row.cnt for row in rows}
@@ -156,7 +165,7 @@ def _yearly_registrations(db: Session, year_start_utc: datetime, months: list[tu
     """New user signups per month, trailing 12 months — same bucketing as yearly_pv/yearly_uv."""
     rows = (
         db.query(
-            func.to_char(User.created_at, "YYYY-MM").label("ym"),
+            _cst_month(User.created_at).label("ym"),
             func.count(User.id).label("cnt"),
         )
         .filter(User.created_at >= year_start_utc)
@@ -176,7 +185,7 @@ def _yearly_new_members(db: Session, year_start_utc: datetime, months: list[tupl
     """
     rows = (
         db.query(
-            func.to_char(AdminAuditLog.created_at, "YYYY-MM").label("ym"),
+            _cst_month(AdminAuditLog.created_at).label("ym"),
             func.count(func.distinct(AdminAuditLog.target_user_id)).label("cnt"),
         )
         .filter(
@@ -282,28 +291,28 @@ async def dashboard_stats(db: Session = Depends(get_db), admin: User = Depends(r
     anonymous_online = max(online_visitors - online_count, 0)
 
     reg_rows = (
-        db.query(func.date(User.created_at).label("day"), func.count(User.id).label("cnt"))
+        db.query(_cst_day(User.created_at).label("day"), func.count(User.id).label("cnt"))
         .filter(User.created_at >= thirty_days_ago)
-        .group_by(func.date(User.created_at))
-        .order_by(func.date(User.created_at))
+        .group_by(_cst_day(User.created_at))
+        .order_by(_cst_day(User.created_at))
         .all()
     )
     daily_registrations = [{"date": str(r.day), "count": r.cnt} for r in reg_rows]
 
     visit_rows = (
-        db.query(func.date(VisitEvent.created_at).label("day"), func.count(func.distinct(VisitEvent.ip_address)).label("cnt"))
+        db.query(_cst_day(VisitEvent.created_at).label("day"), func.count(func.distinct(VisitEvent.ip_address)).label("cnt"))
         .filter(VisitEvent.created_at >= thirty_days_ago)
-        .group_by(func.date(VisitEvent.created_at))
-        .order_by(func.date(VisitEvent.created_at))
+        .group_by(_cst_day(VisitEvent.created_at))
+        .order_by(_cst_day(VisitEvent.created_at))
         .all()
     )
     daily_visitors = [{"date": str(r.day), "count": r.cnt} for r in visit_rows]
 
     login_rows = (
-        db.query(func.date(LoginSession.last_active_at).label("day"), func.count(func.distinct(LoginSession.user_id)).label("cnt"))
+        db.query(_cst_day(LoginSession.last_active_at).label("day"), func.count(func.distinct(LoginSession.user_id)).label("cnt"))
         .filter(LoginSession.last_active_at >= thirty_days_ago)
-        .group_by(func.date(LoginSession.last_active_at))
-        .order_by(func.date(LoginSession.last_active_at))
+        .group_by(_cst_day(LoginSession.last_active_at))
+        .order_by(_cst_day(LoginSession.last_active_at))
         .all()
     )
     daily_logins = [{"date": str(r.day), "count": r.cnt} for r in login_rows]
@@ -393,10 +402,10 @@ async def dashboard_stats(db: Session = Depends(get_db), admin: User = Depends(r
         monthly_anon_visitors.append({"date": date_str, "count": 0})
 
     reg_month_rows = (
-        db.query(func.date(User.created_at).label("day"), func.count(User.id).label("cnt"))
+        db.query(_cst_day(User.created_at).label("day"), func.count(User.id).label("cnt"))
         .filter(User.created_at >= month_start, User.created_at < month_end)
-        .group_by(func.date(User.created_at))
-        .order_by(func.date(User.created_at))
+        .group_by(_cst_day(User.created_at))
+        .order_by(_cst_day(User.created_at))
         .all()
     )
     reg_map = {str(r.day): r.cnt for r in reg_month_rows}
@@ -413,18 +422,17 @@ async def dashboard_stats(db: Session = Depends(get_db), admin: User = Depends(r
     # All page views (PV) per day.
     pv_month_rows = (
         db.query(
-            func.date(VisitEvent.created_at).label("day"),
+            _cst_day(VisitEvent.created_at).label("day"),
             func.count(VisitEvent.id).label("cnt"),
         )
         .filter(
             VisitEvent.event_type == "page_view",
             VisitEvent.geo_location.is_distinct_from("本地开发"),
-            VisitEvent.geo_location.is_distinct_from("未知"),
             VisitEvent.created_at >= month_start,
             VisitEvent.created_at < month_end,
         )
-        .group_by(func.date(VisitEvent.created_at))
-        .order_by(func.date(VisitEvent.created_at))
+        .group_by(_cst_day(VisitEvent.created_at))
+        .order_by(_cst_day(VisitEvent.created_at))
         .all()
     )
     pv_map = {str(r.day): r.cnt for r in pv_month_rows}
@@ -434,18 +442,17 @@ async def dashboard_stats(db: Session = Depends(get_db), admin: User = Depends(r
     # Unique visitors (UV) per day — client_id first, historical IP fallback.
     uv_month_rows = (
         db.query(
-            func.date(VisitEvent.created_at).label("day"),
+            _cst_day(VisitEvent.created_at).label("day"),
             func.count(func.distinct(_visitor_key())).label("cnt"),
         )
         .filter(
             VisitEvent.event_type == "page_view",
             VisitEvent.geo_location.is_distinct_from("本地开发"),
-            VisitEvent.geo_location.is_distinct_from("未知"),
             VisitEvent.created_at >= month_start,
             VisitEvent.created_at < month_end,
         )
-        .group_by(func.date(VisitEvent.created_at))
-        .order_by(func.date(VisitEvent.created_at))
+        .group_by(_cst_day(VisitEvent.created_at))
+        .order_by(_cst_day(VisitEvent.created_at))
         .all()
     )
     visit_map = {str(r.day): r.cnt for r in uv_month_rows}
@@ -457,7 +464,7 @@ async def dashboard_stats(db: Session = Depends(get_db), admin: User = Depends(r
     # Anonymous-only series (user_id IS NULL).
     anon_month_rows = (
         db.query(
-            func.date(VisitEvent.created_at).label("day"),
+            _cst_day(VisitEvent.created_at).label("day"),
             func.count(func.distinct(VisitEvent.ip_address)).label("cnt"),
         )
         .filter(
@@ -465,8 +472,8 @@ async def dashboard_stats(db: Session = Depends(get_db), admin: User = Depends(r
             VisitEvent.created_at >= month_start,
             VisitEvent.created_at < month_end,
         )
-        .group_by(func.date(VisitEvent.created_at))
-        .order_by(func.date(VisitEvent.created_at))
+        .group_by(_cst_day(VisitEvent.created_at))
+        .order_by(_cst_day(VisitEvent.created_at))
         .all()
     )
     anon_map = {str(r.day): r.cnt for r in anon_month_rows}
@@ -477,7 +484,7 @@ async def dashboard_stats(db: Session = Depends(get_db), admin: User = Depends(r
     monthly_login_visitors = [{"date": str(month_start_cst_date + timedelta(days=i)), "count": 0} for i in range(month_days)]
     login_month_rows = (
         db.query(
-            func.date(VisitEvent.created_at).label("day"),
+            _cst_day(VisitEvent.created_at).label("day"),
             func.count(func.distinct(VisitEvent.user_id)).label("cnt"),
         )
         .filter(
@@ -485,8 +492,8 @@ async def dashboard_stats(db: Session = Depends(get_db), admin: User = Depends(r
             VisitEvent.created_at >= month_start,
             VisitEvent.created_at < month_end,
         )
-        .group_by(func.date(VisitEvent.created_at))
-        .order_by(func.date(VisitEvent.created_at))
+        .group_by(_cst_day(VisitEvent.created_at))
+        .order_by(_cst_day(VisitEvent.created_at))
         .all()
     )
     login_map = {str(r.day): r.cnt for r in login_month_rows}
@@ -500,7 +507,7 @@ async def dashboard_stats(db: Session = Depends(get_db), admin: User = Depends(r
 
     yearly_anon_rows = (
         db.query(
-            func.to_char(VisitEvent.created_at, "YYYY-MM").label("ym"),
+            _cst_month(VisitEvent.created_at).label("ym"),
             func.count(func.distinct(VisitEvent.ip_address)).label("cnt"),
         )
         .filter(
@@ -519,13 +526,12 @@ async def dashboard_stats(db: Session = Depends(get_db), admin: User = Depends(r
     # Last 12 months, all page views (PV).
     yearly_pv_rows = (
         db.query(
-            func.to_char(VisitEvent.created_at, "YYYY-MM").label("ym"),
+            _cst_month(VisitEvent.created_at).label("ym"),
             func.count(VisitEvent.id).label("cnt"),
         )
         .filter(
             VisitEvent.event_type == "page_view",
             VisitEvent.geo_location.is_distinct_from("本地开发"),
-            VisitEvent.geo_location.is_distinct_from("未知"),
             VisitEvent.created_at >= year_start_utc,
         )
         .group_by("ym")
@@ -540,13 +546,12 @@ async def dashboard_stats(db: Session = Depends(get_db), admin: User = Depends(r
     # Last 12 months, unique visitors (UV), client_id first with IP fallback.
     yearly_uv_rows = (
         db.query(
-            func.to_char(VisitEvent.created_at, "YYYY-MM").label("ym"),
+            _cst_month(VisitEvent.created_at).label("ym"),
             func.count(func.distinct(_visitor_key())).label("cnt"),
         )
         .filter(
             VisitEvent.event_type == "page_view",
             VisitEvent.geo_location.is_distinct_from("本地开发"),
-            VisitEvent.geo_location.is_distinct_from("未知"),
             VisitEvent.created_at >= year_start_utc,
         )
         .group_by("ym")
