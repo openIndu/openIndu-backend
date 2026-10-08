@@ -298,6 +298,36 @@ def test_stats_apis(monkeypatch):
     lh_q.offset.return_value.limit.return_value.all.return_value = []
     assert asyncio.run(stats.login_history(page=1, size=20, keyword=None, status=None, db=db, admin=_user()))["data"]["total"] == 1
 
+
+def test_dashboard_page_views_include_unknown_geo_but_exclude_local():
+    from sqlalchemy.dialects import postgresql
+
+    from app.api import stats
+
+    db = MagicMock()
+    stats._quality_visit_query(db)
+    conditions = db.query.return_value.filter.call_args.args
+    rendered = " AND ".join(
+        str(condition.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
+        for condition in conditions
+    )
+
+    assert "page_view" in rendered
+    assert "本地开发" in rendered
+    assert "未知" not in rendered
+
+
+def test_dashboard_date_buckets_use_beijing_time():
+    from sqlalchemy.dialects import postgresql
+
+    from app.api import stats
+    from app.models.visit_event import VisitEvent
+
+    for expression in (stats._cst_day(VisitEvent.created_at), stats._cst_month(VisitEvent.created_at)):
+        rendered = str(expression.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
+        assert "INTERVAL '8 hours'" in rendered
+
+
 def _grouped_chain(items):
     """_chain() with .group_by() also wired into the fluent chain.
 
